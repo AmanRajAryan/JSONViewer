@@ -1,0 +1,20 @@
+{
+  "allFiles": [
+    {
+      "file": "/storage/emulated/0/AndroidIDEProjects/JSONViewer/app/src/main/java/aman/jsonviewer/MainActivity.java",
+      "selection": {
+        "end": {
+          "column": 0,
+          "index": 26,
+          "line": 2
+        },
+        "start": {
+          "column": 0,
+          "index": 26,
+          "line": 2
+        }
+      }
+    }
+  ],
+  "selectedFile": "/storage/emulated/0/AndroidIDEProjects/JSONViewer/app/src/main/java/aman/jsonviewer/MainActivity.java"
+}

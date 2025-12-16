@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.google.android.material.card.MaterialCardView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_margin="8dp"
+    app:cardBackgroundColor="#1E1E1E"
+    app:cardCornerRadius="12dp"
+    app:cardElevation="4dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView
+            android:id="@+id/keyText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="#00BCD4"
+            android:textSize="14sp"
+            android:fontFamily="monospace"
+            android:textStyle="bold"/>
+
+        <TextView
+            android:id="@+id/valueText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:fontFamily="monospace"
+            android:layout_marginTop="8dp"
+            android:maxLines="5"
+            android:ellipsize="end"/>
+
+        <TextView
+            android:id="@+id/typeText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textSize="12sp"
+            android:layout_marginTop="8dp"
+            android:padding="4dp"
+            android:background="@drawable/type_badge_background"/>
+
+    </LinearLayout>
+
+</com.google.android.material.card.MaterialCardView>

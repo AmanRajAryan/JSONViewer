@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="background_dark">#121212</color>
+    <color name="surface_dark">#1E1E1E</color>
+    <color name="primary_cyan">#00BCD4</color>
+    <color name="accent_purple">#9C27B0</color>
+    <color name="accent_orange">#FF9800</color>
+    <color name="text_white">#FFFFFF</color>
+    <color name="text_gray">#AAAAAA</color>
+    
+    <!-- JSON colors -->
+    <color name="json_key">#00BCD4</color>
+    <color name="json_string">#4CAF50</color>
+    <color name="json_number">#FF9800</color>
+    <color name="json_boolean">#9C27B0</color>
+    <color name="json_null">#757575</color>
+</resources>
+
+

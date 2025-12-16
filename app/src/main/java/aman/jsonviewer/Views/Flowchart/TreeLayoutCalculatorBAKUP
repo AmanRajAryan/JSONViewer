@@ -1,0 +1,106 @@
+package aman.jsonviewer;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+/**
+ * Calculates the positions of nodes in a tree layout.
+ * Optimized with memoization to prevent redundant recursive calculations.
+ */
+public class TreeLayoutCalculator {
+    private final Map<CardNode, List<CardNode>> childrenMap;
+    private final Set<CardNode> collapsedNodes;
+    // Cache to store calculated widths so we don't recalculate them O(N^2) times
+    private final Map<CardNode, Float> subtreeWidthCache; 
+
+    public TreeLayoutCalculator(Map<CardNode, List<CardNode>> childrenMap, 
+                                 Set<CardNode> collapsedNodes) {
+        this.childrenMap = childrenMap;
+        this.collapsedNodes = collapsedNodes;
+        this.subtreeWidthCache = new HashMap<>();
+    }
+
+    /**
+     * Entry point for layout calculation.
+     * Clears cache before starting to ensure fresh layout.
+     */
+    public void calculateTreeLayout(CardNode root, float x, float y) {
+        subtreeWidthCache.clear(); // Important: Reset cache on new calculation pass
+        calculateNodePosition(root, x, y);
+    }
+
+    private void calculateNodePosition(CardNode node, float x, float y) {
+        node.x = x;
+        node.y = y;
+
+        List<CardNode> children = childrenMap.get(node);
+        if (children == null || children.isEmpty() || collapsedNodes.contains(node)) {
+            return;
+        }
+
+        // 1. Calculate total width of children block
+        float totalChildrenWidth = 0;
+        for (CardNode child : children) {
+            totalChildrenWidth += getSubtreeWidth(child);
+        }
+        totalChildrenWidth += (children.size() - 1) * LayoutConstants.HORIZONTAL_SPACING;
+
+        // 2. Determine where the first child should start to keep the group centered
+        // Logic: (ParentX) - (Half of Children Group)
+        // We add CardWidth/2 to ParentX because we want the center of the children 
+        // to align with the center of the parent.
+        float startX = x - (totalChildrenWidth / 2f); 
+
+        float currentChildY = y + LayoutConstants.VERTICAL_SPACING + LayoutConstants.CARD_HEIGHT;
+        float currentXOffset = startX;
+
+        // 3. Position the children
+        for (CardNode child : children) {
+            float childSubtreeWidth = getSubtreeWidth(child);
+            
+            // We want to place the child at the center of its own allocated subtree area
+            float childCenterX = currentXOffset + (childSubtreeWidth / 2f);
+            
+            calculateNodePosition(child, childCenterX, currentChildY);
+
+            // Move the offset by the size of the child we just placed + spacing
+            currentXOffset += childSubtreeWidth + LayoutConstants.HORIZONTAL_SPACING;
+        }
+    }
+
+    /**
+     * Calculates the width of a subtree rooted at the given node.
+     * Uses Memoization.
+     */
+    private float getSubtreeWidth(CardNode node) {
+        // Return cached value if available
+        if (subtreeWidthCache.containsKey(node)) {
+            return subtreeWidthCache.get(node);
+        }
+
+        List<CardNode> children = childrenMap.get(node);
+        
+        // Base Case: Leaf or Collapsed Node
+        if (children == null || children.isEmpty() || collapsedNodes.contains(node)) {
+            float width = LayoutConstants.CARD_WIDTH;
+            subtreeWidthCache.put(node, width);
+            return width;
+        }
+
+        // Recursive Step
+        float totalWidth = 0;
+        for (CardNode child : children) {
+            totalWidth += getSubtreeWidth(child);
+        }
+        // Add spacing between children
+        totalWidth += (children.size() - 1) * LayoutConstants.HORIZONTAL_SPACING;
+
+        // The width of this node is the wider of: ITSELF vs ITS CHILDREN
+        float calculatedWidth = Math.max(LayoutConstants.CARD_WIDTH, totalWidth);
+        
+        subtreeWidthCache.put(node, calculatedWidth);
+        return calculatedWidth;
+    }
+}

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="AppTheme" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">#00BCD4</item>
+        <item name="colorPrimaryDark">#121212</item>
+        <item name="colorAccent">#00BCD4</item>
+        <item name="android:windowBackground">#121212</item>
+        <item name="android:statusBarColor">#121212</item>
+        <item name="android:navigationBarColor">#121212</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>
+
+

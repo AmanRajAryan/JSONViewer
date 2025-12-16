@@ -1,0 +1,802 @@
+package aman.jsonviewer;
+
+import android.content.Context;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.RectF;
+import android.view.MotionEvent;
+import android.view.ScaleGestureDetector;
+import android.view.View;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+public class FlowChartCanvas extends View {
+
+    private List<CardNode> nodes = new ArrayList<>();
+    private List<Connection> connections = new ArrayList<>();
+    private Map<CardNode, List<CardNode>> childrenMap = new HashMap<>();
+    private Set<CardNode> collapsedNodes = new HashSet<>();
+
+    private Paint cardPaint;
+    private Paint cardStrokePaint;
+    private Paint textPaint;
+    private Paint linePaint;
+    private Paint arrowPaint;
+    private Paint collapseBadgePaint;
+    private Paint resetButtonPaint;
+    private Paint resetButtonStrokePaint;
+
+    private float offsetX = 0;
+    private float offsetY = 0;
+    private float scale = 1.0f;
+    private float lastTouchX = 0;
+    private float lastTouchY = 0;
+    private boolean isDragging = false;
+    private boolean isScaling = false;
+
+    private ScaleGestureDetector scaleDetector;
+    private android.widget.OverScroller scroller;
+    private android.view.VelocityTracker velocityTracker;
+
+    private static final float CARD_WIDTH = 240;
+    private static final float CARD_HEIGHT = 90;
+    private static final float HORIZONTAL_SPACING = 80;
+    private static final float VERTICAL_SPACING = 1000; // Increased from 140
+    private static final float CARD_CORNER_RADIUS = 12;
+    private static final float MIN_SCALE = 0.3f;
+    private static final float MAX_SCALE = 3.0f;
+    private static final float COLLAPSE_BADGE_SIZE = 50;
+    private static final int CLICK_THRESHOLD = 10; // pixels
+    private static final float RESET_BUTTON_SIZE = 56;
+    private static final float RESET_BUTTON_MARGIN = 24;
+
+    // Adjustable tree positioning - tweak this to move tree up/down
+    private static final float TREE_TOP_MARGIN = 300; // Increased from 200 - makes tree start lower
+
+    private float touchDownX = 0;
+    private float touchDownY = 0;
+
+    private OnCardClickListener clickListener;
+
+    public interface OnCardClickListener {
+        void onCardClick(String key, String value, String type);
+    }
+
+    public void setOnCardClickListener(OnCardClickListener listener) {
+        this.clickListener = listener;
+    }
+
+    public FlowChartCanvas(Context context) {
+        super(context);
+        init(context);
+    }
+
+    private void init(Context context) {
+        setBackgroundColor(0xFF121212);
+
+        cardPaint = new Paint();
+        cardPaint.setAntiAlias(true);
+        cardPaint.setColor(0xFF1E1E1E);
+        cardPaint.setStyle(Paint.Style.FILL);
+
+        cardStrokePaint = new Paint();
+        cardStrokePaint.setAntiAlias(true);
+        cardStrokePaint.setColor(0xFF00BCD4);
+        cardStrokePaint.setStyle(Paint.Style.STROKE);
+        cardStrokePaint.setStrokeWidth(3);
+
+        textPaint = new Paint();
+        textPaint.setAntiAlias(true);
+        textPaint.setColor(0xFFFFFFFF);
+        textPaint.setTextSize(32);
+        textPaint.setTypeface(android.graphics.Typeface.MONOSPACE);
+
+        linePaint = new Paint();
+        linePaint.setAntiAlias(true);
+        linePaint.setColor(0xFF00BCD4);
+        linePaint.setStyle(Paint.Style.STROKE);
+        linePaint.setStrokeWidth(3);
+
+        arrowPaint = new Paint();
+        arrowPaint.setAntiAlias(true);
+        arrowPaint.setColor(0xFF00BCD4);
+        arrowPaint.setStyle(Paint.Style.FILL);
+
+        collapseBadgePaint = new Paint();
+        collapseBadgePaint.setAntiAlias(true);
+        collapseBadgePaint.setColor(0xFF00BCD4);
+        collapseBadgePaint.setStyle(Paint.Style.FILL);
+
+        resetButtonPaint = new Paint();
+        resetButtonPaint.setAntiAlias(true);
+        resetButtonPaint.setColor(0xFF1E1E1E);
+        resetButtonPaint.setStyle(Paint.Style.FILL);
+
+        resetButtonStrokePaint = new Paint();
+        resetButtonStrokePaint.setAntiAlias(true);
+        resetButtonStrokePaint.setColor(0xFF00BCD4);
+        resetButtonStrokePaint.setStyle(Paint.Style.STROKE);
+        resetButtonStrokePaint.setStrokeWidth(3);
+
+        scaleDetector = new ScaleGestureDetector(context, new ScaleListener());
+        scroller = new android.widget.OverScroller(context);
+    }
+
+    public void buildFromJSON(JSONObject json) {
+        nodes.clear();
+        connections.clear();
+        childrenMap.clear();
+        collapsedNodes.clear();
+
+        CardNode rootNode = new CardNode("Root", "Object", "Object", 0, 0, 0);
+        nodes.add(rootNode);
+        childrenMap.put(rootNode, new ArrayList<>());
+
+        try {
+            buildObjectNode(json, rootNode);
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+
+        // Calculate positions using proper tree layout
+        calculateTreeLayout(rootNode, 0, 0);
+
+        // Center the view
+        post(
+                () -> {
+                    offsetX = getWidth() / 2f;
+                    offsetY = TREE_TOP_MARGIN;
+                    invalidate();
+                });
+    }
+
+    @Override
+    public void computeScroll() {
+        if (scroller != null && scroller.computeScrollOffset()) {
+            offsetX = scroller.getCurrX();
+            offsetY = scroller.getCurrY();
+            invalidate();
+        }
+    }
+
+    public void buildFromJSONArray(JSONArray jsonArray) {
+        nodes.clear();
+        connections.clear();
+        childrenMap.clear();
+        collapsedNodes.clear();
+
+        CardNode rootNode =
+                new CardNode("Root", "Array[" + jsonArray.length() + "]", "Array", 0, 0, 0);
+        nodes.add(rootNode);
+        childrenMap.put(rootNode, new ArrayList<>());
+
+        try {
+            buildArrayNode(jsonArray, rootNode);
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+
+        // Calculate positions using proper tree layout
+        calculateTreeLayout(rootNode, 0, 0);
+
+        // Center the view
+        post(
+                () -> {
+                    offsetX = getWidth() / 2f;
+                    offsetY = 200;
+                    invalidate();
+                });
+    }
+
+    private void buildObjectNode(JSONObject json, CardNode parent) throws JSONException {
+        Iterator<String> keys = json.keys();
+        List<CardNode> children = new ArrayList<>();
+
+        while (keys.hasNext()) {
+            String key = keys.next();
+            Object value = json.get(key);
+
+            String type = getValueType(value);
+            String displayValue = formatValue(value);
+
+            CardNode childNode = new CardNode(key, displayValue, type, 0, 0, parent.level + 1);
+            nodes.add(childNode);
+            children.add(childNode);
+            childrenMap.put(childNode, new ArrayList<>());
+
+            Connection connection = new Connection(parent, childNode);
+            connections.add(connection);
+
+            if (value instanceof JSONObject) {
+                buildObjectNode((JSONObject) value, childNode);
+            } else if (value instanceof JSONArray) {
+                buildArrayNode((JSONArray) value, childNode);
+            }
+        }
+
+        childrenMap.put(parent, children);
+    }
+
+    private void buildArrayNode(JSONArray jsonArray, CardNode parent) throws JSONException {
+        int maxItems = Math.min(jsonArray.length(), 8);
+        List<CardNode> children = new ArrayList<>();
+
+        for (int i = 0; i < maxItems; i++) {
+            Object value = jsonArray.get(i);
+
+            String type = getValueType(value);
+            String displayValue = formatValue(value);
+            String key = "[" + i + "]";
+
+            CardNode childNode = new CardNode(key, displayValue, type, 0, 0, parent.level + 1);
+            nodes.add(childNode);
+            children.add(childNode);
+            childrenMap.put(childNode, new ArrayList<>());
+
+            Connection connection = new Connection(parent, childNode);
+            connections.add(connection);
+
+            if (value instanceof JSONObject) {
+                buildObjectNode((JSONObject) value, childNode);
+            } else if (value instanceof JSONArray) {
+                buildArrayNode((JSONArray) value, childNode);
+            }
+        }
+
+        if (jsonArray.length() > maxItems) {
+            CardNode moreNode =
+                    new CardNode(
+                            "...",
+                            "+" + (jsonArray.length() - maxItems) + " more",
+                            "Info",
+                            0,
+                            0,
+                            parent.level + 1);
+            nodes.add(moreNode);
+            children.add(moreNode);
+            childrenMap.put(moreNode, new ArrayList<>());
+
+            Connection connection = new Connection(parent, moreNode);
+            connections.add(connection);
+        }
+
+        childrenMap.put(parent, children);
+    }
+
+    private void calculateTreeLayout(CardNode node, float x, float y) {
+        node.x = x;
+        node.y = y;
+
+        List<CardNode> children = childrenMap.get(node);
+        if (children == null || children.isEmpty() || collapsedNodes.contains(node)) {
+            return;
+        }
+
+        float totalWidth = 0;
+        for (CardNode child : children) {
+            float childWidth = getSubtreeWidth(child);
+            totalWidth += childWidth;
+        }
+        totalWidth += (children.size() - 1) * HORIZONTAL_SPACING;
+
+        float startX = x - totalWidth / 2f + CARD_WIDTH / 2f;
+        float childY = y + VERTICAL_SPACING + CARD_HEIGHT;
+
+        float currentX = startX;
+        for (CardNode child : children) {
+            float childWidth = getSubtreeWidth(child);
+            float childCenterX = currentX + childWidth / 2f - CARD_WIDTH / 2f;
+            calculateTreeLayout(child, childCenterX, childY);
+            currentX += childWidth + HORIZONTAL_SPACING;
+        }
+    }
+
+    private float getSubtreeWidth(CardNode node) {
+        List<CardNode> children = childrenMap.get(node);
+        if (children == null || children.isEmpty() || collapsedNodes.contains(node)) {
+            return CARD_WIDTH;
+        }
+
+        float totalWidth = 0;
+        for (CardNode child : children) {
+            totalWidth += getSubtreeWidth(child);
+        }
+        totalWidth += (children.size() - 1) * HORIZONTAL_SPACING;
+
+        return Math.max(CARD_WIDTH, totalWidth);
+    }
+
+    private boolean shouldShowNode(CardNode node) {
+        // Check if any ancestor is collapsed
+        for (CardNode n : nodes) {
+            if (collapsedNodes.contains(n)) {
+                List<CardNode> children = childrenMap.get(n);
+                if (children != null && isDescendantOf(node, n)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    private boolean isDescendantOf(CardNode node, CardNode ancestor) {
+        List<CardNode> children = childrenMap.get(ancestor);
+        if (children == null) return false;
+
+        for (CardNode child : children) {
+            if (child == node) return true;
+            if (isDescendantOf(node, child)) return true;
+        }
+        return false;
+    }
+
+    private String getValueType(Object value) {
+        if (value instanceof JSONObject) {
+            return "Object";
+        } else if (value instanceof JSONArray) {
+            return "Array";
+        } else if (value instanceof String) {
+            return "String";
+        } else if (value instanceof Number) {
+            return "Number";
+        } else if (value instanceof Boolean) {
+            return "Boolean";
+        } else if (value == JSONObject.NULL) {
+            return "Null";
+        }
+        return "Unknown";
+    }
+
+    private String formatValue(Object value) {
+        if (value instanceof JSONObject) {
+            JSONObject obj = (JSONObject) value;
+            return "{ " + obj.length() + " }";
+        } else if (value instanceof JSONArray) {
+            JSONArray arr = (JSONArray) value;
+            return "[ " + arr.length() + " ]";
+        } else if (value == JSONObject.NULL) {
+            return "null";
+        } else {
+            String str = value.toString();
+            if (str.length() > 25) {
+                return str.substring(0, 22) + "...";
+            }
+            return str;
+        }
+    }
+
+    @Override
+    protected void onDraw(Canvas canvas) {
+        super.onDraw(canvas);
+
+        canvas.save();
+        canvas.translate(offsetX, offsetY);
+        canvas.scale(scale, scale);
+
+        // Draw connections first
+        for (Connection connection : connections) {
+            if (shouldShowNode(connection.from) && shouldShowNode(connection.to)) {
+                drawConnection(canvas, connection);
+            }
+        }
+
+        // Draw cards
+        for (CardNode node : nodes) {
+            if (shouldShowNode(node)) {
+                drawCard(canvas, node);
+            }
+        }
+
+        canvas.restore();
+
+        // Draw reset button (always on top, not affected by pan/zoom)
+        drawResetButton(canvas);
+    }
+
+    private void drawConnection(Canvas canvas, Connection connection) {
+        float x1 = connection.from.x + CARD_WIDTH / 2f;
+        float y1 = connection.from.y + CARD_HEIGHT;
+        float x2 = connection.to.x + CARD_WIDTH / 2f;
+        float y2 = connection.to.y;
+
+        Path path = new Path();
+        path.moveTo(x1, y1);
+
+        float midY = (y1 + y2) / 2f;
+        path.cubicTo(x1, midY, x2, midY, x2, y2);
+
+        canvas.drawPath(path, linePaint);
+        drawArrow(canvas, x2, y2);
+    }
+
+    private void drawArrow(Canvas canvas, float x, float y) {
+        Path arrowPath = new Path();
+        arrowPath.moveTo(x, y);
+        arrowPath.lineTo(x - 10, y - 15);
+        arrowPath.lineTo(x + 10, y - 15);
+        arrowPath.close();
+        canvas.drawPath(arrowPath, arrowPaint);
+    }
+
+    private void drawCard(Canvas canvas, CardNode node) {
+        RectF cardRect = new RectF(node.x, node.y, node.x + CARD_WIDTH, node.y + CARD_HEIGHT);
+
+        canvas.drawRoundRect(cardRect, CARD_CORNER_RADIUS, CARD_CORNER_RADIUS, cardPaint);
+
+        Paint borderPaint = new Paint(cardStrokePaint);
+        borderPaint.setColor(getTypeColor(node.type));
+        canvas.drawRoundRect(cardRect, CARD_CORNER_RADIUS, CARD_CORNER_RADIUS, borderPaint);
+
+        textPaint.setTextSize(34);
+        textPaint.setFakeBoldText(true);
+        textPaint.setColor(0xFFFFFFFF);
+        String displayKey = node.key.length() > 18 ? node.key.substring(0, 15) + "..." : node.key;
+        float keyWidth = textPaint.measureText(displayKey);
+        canvas.drawText(displayKey, node.x + (CARD_WIDTH - keyWidth) / 2f, node.y + 40, textPaint);
+
+        textPaint.setTextSize(26);
+        textPaint.setFakeBoldText(false);
+        textPaint.setColor(0xFF888888);
+        float typeWidth = textPaint.measureText(node.type);
+        canvas.drawText(node.type, node.x + (CARD_WIDTH - typeWidth) / 2f, node.y + 68, textPaint);
+
+        // Draw collapse badge if node has children
+        List<CardNode> children = childrenMap.get(node);
+        if (children != null && !children.isEmpty()) {
+            float badgeX = node.x + CARD_WIDTH - COLLAPSE_BADGE_SIZE - 8;
+            float badgeY = node.y + 8;
+
+            canvas.drawCircle(
+                    badgeX + COLLAPSE_BADGE_SIZE / 2f,
+                    badgeY + COLLAPSE_BADGE_SIZE / 2f,
+                    COLLAPSE_BADGE_SIZE / 2f,
+                    collapseBadgePaint);
+
+            textPaint.setTextSize(24);
+            textPaint.setFakeBoldText(true);
+            textPaint.setColor(0xFF000000);
+            String symbol = collapsedNodes.contains(node) ? "+" : "−";
+            float symbolWidth = textPaint.measureText(symbol);
+            canvas.drawText(
+                    symbol,
+                    badgeX + (COLLAPSE_BADGE_SIZE - symbolWidth) / 2f,
+                    badgeY + COLLAPSE_BADGE_SIZE / 2f + 8,
+                    textPaint);
+        }
+    }
+
+    private void drawResetButton(Canvas canvas) {
+        float buttonX = getWidth() - RESET_BUTTON_SIZE - RESET_BUTTON_MARGIN;
+        float buttonY = RESET_BUTTON_MARGIN;
+
+        // Draw button circle
+        canvas.drawCircle(
+                buttonX + RESET_BUTTON_SIZE / 2f,
+                buttonY + RESET_BUTTON_SIZE / 2f,
+                RESET_BUTTON_SIZE / 2f,
+                resetButtonPaint);
+        canvas.drawCircle(
+                buttonX + RESET_BUTTON_SIZE / 2f,
+                buttonY + RESET_BUTTON_SIZE / 2f,
+                RESET_BUTTON_SIZE / 2f,
+                resetButtonStrokePaint);
+
+        // Draw reset icon (circular arrow)
+        Paint iconPaint = new Paint();
+        iconPaint.setAntiAlias(true);
+        iconPaint.setColor(0xFF00BCD4);
+        iconPaint.setStyle(Paint.Style.STROKE);
+        iconPaint.setStrokeWidth(4);
+        iconPaint.setStrokeCap(Paint.Cap.ROUND);
+
+        float centerX = buttonX + RESET_BUTTON_SIZE / 2f;
+        float centerY = buttonY + RESET_BUTTON_SIZE / 2f;
+        float radius = RESET_BUTTON_SIZE / 3f;
+
+        RectF arcRect =
+                new RectF(centerX - radius, centerY - radius, centerX + radius, centerY + radius);
+        canvas.drawArc(arcRect, -90, 270, false, iconPaint);
+
+        // Draw arrow head
+        Path arrowHead = new Path();
+        arrowHead.moveTo(centerX, centerY - radius);
+        arrowHead.lineTo(centerX - 8, centerY - radius - 8);
+        arrowHead.lineTo(centerX + 8, centerY - radius - 8);
+        canvas.drawPath(arrowHead, iconPaint);
+    }
+
+    private int getTypeColor(String type) {
+        switch (type) {
+            case "Object":
+                return 0xFF00BCD4;
+            case "Array":
+                return 0xFF9C27B0;
+            case "String":
+                return 0xFF4CAF50;
+            case "Number":
+                return 0xFFFF9800;
+            case "Boolean":
+                return 0xFFF44336;
+            case "Null":
+                return 0xFF757575;
+            case "Info":
+                return 0xFF2196F3;
+            default:
+                return 0xFF00BCD4;
+        }
+    }
+
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        scaleDetector.onTouchEvent(event);
+
+        // Initialize velocity tracker
+        if (velocityTracker == null) {
+            velocityTracker = android.view.VelocityTracker.obtain();
+        }
+        velocityTracker.addMovement(event);
+
+        switch (event.getAction() & MotionEvent.ACTION_MASK) {
+            case MotionEvent.ACTION_DOWN:
+                // Stop any ongoing fling
+                if (!scroller.isFinished()) {
+                    scroller.abortAnimation();
+                }
+
+                touchDownX = event.getX();
+                touchDownY = event.getY();
+                lastTouchX = event.getX();
+                lastTouchY = event.getY();
+                isDragging = false;
+                isScaling = false;
+
+                // Check if reset button clicked
+                if (isResetButtonClicked(event.getX(), event.getY())) {
+                    resetView();
+                    return true;
+                }
+                return true;
+
+            case MotionEvent.ACTION_POINTER_DOWN:
+                isScaling = true;
+                isDragging = false;
+                return true;
+
+            case MotionEvent.ACTION_MOVE:
+                if (isScaling || scaleDetector.isInProgress()) {
+                    return true;
+                }
+
+                if (event.getPointerCount() == 1) {
+                    float dx = event.getX() - lastTouchX;
+                    float dy = event.getY() - lastTouchY;
+
+                    if (Math.abs(dx) > CLICK_THRESHOLD || Math.abs(dy) > CLICK_THRESHOLD) {
+                        isDragging = true;
+                    }
+
+                    if (isDragging) {
+                        offsetX += dx;
+                        offsetY += dy;
+
+                        lastTouchX = event.getX();
+                        lastTouchY = event.getY();
+
+                        invalidate();
+                    }
+                }
+                return true;
+
+            case MotionEvent.ACTION_UP:
+                if (isDragging) {
+                    // Calculate velocity and start fling
+                    velocityTracker.computeCurrentVelocity(1000);
+                    float velocityX = velocityTracker.getXVelocity();
+                    float velocityY = velocityTracker.getYVelocity();
+
+                    // Start fling if velocity is significant
+                    if (Math.abs(velocityX) > 100 || Math.abs(velocityY) > 100) {
+                        scroller.fling(
+                                (int) offsetX,
+                                (int) offsetY,
+                                (int) velocityX,
+                                (int) velocityY,
+                                Integer.MIN_VALUE,
+                                Integer.MAX_VALUE,
+                                Integer.MIN_VALUE,
+                                Integer.MAX_VALUE);
+                        invalidate();
+                    }
+                } else if (!isScaling) {
+                    float totalDx = Math.abs(event.getX() - touchDownX);
+                    float totalDy = Math.abs(event.getY() - touchDownY);
+
+                    if (totalDx < CLICK_THRESHOLD && totalDy < CLICK_THRESHOLD) {
+                        handleClick(event.getX(), event.getY());
+                    }
+                }
+
+                isDragging = false;
+                isScaling = false;
+
+                if (velocityTracker != null) {
+                    velocityTracker.recycle();
+                    velocityTracker = null;
+                }
+                return true;
+
+            case MotionEvent.ACTION_POINTER_UP:
+                if (event.getPointerCount() == 2) {
+                    isScaling = false;
+                    isDragging = false;
+
+                    // Update last touch to remaining pointer
+                    int remainingIndex = event.getActionIndex() == 0 ? 1 : 0;
+                    lastTouchX = event.getX(remainingIndex);
+                    lastTouchY = event.getY(remainingIndex);
+                }
+                return true;
+
+            case MotionEvent.ACTION_CANCEL:
+                isDragging = false;
+                isScaling = false;
+                if (velocityTracker != null) {
+                    velocityTracker.recycle();
+                    velocityTracker = null;
+                }
+                return true;
+        }
+
+        return super.onTouchEvent(event);
+    }
+
+    private void handleClick(float screenX, float screenY) {
+        float touchX = (screenX - offsetX) / scale;
+        float touchY = (screenY - offsetY) / scale;
+
+        CardNode clickedNode = getCardAtPosition(touchX, touchY);
+        if (clickedNode != null) {
+            // Check if clicked on collapse badge
+            List<CardNode> children = childrenMap.get(clickedNode);
+            if (children != null && !children.isEmpty()) {
+                float badgeX = clickedNode.x + CARD_WIDTH - COLLAPSE_BADGE_SIZE - 8;
+                float badgeY = clickedNode.y + 8;
+
+                if (touchX >= badgeX
+                        && touchX <= badgeX + COLLAPSE_BADGE_SIZE
+                        && touchY >= badgeY
+                        && touchY <= badgeY + COLLAPSE_BADGE_SIZE) {
+                    // Toggle collapse
+                    if (collapsedNodes.contains(clickedNode)) {
+                        collapsedNodes.remove(clickedNode);
+                    } else {
+                        collapsedNodes.add(clickedNode);
+                    }
+
+                    // Recalculate layout
+                    CardNode root = nodes.get(0);
+                    calculateTreeLayout(root, root.x, root.y);
+                    invalidate();
+                    return;
+                }
+            }
+
+            // Regular card click
+            if (clickListener != null) {
+                clickListener.onCardClick(clickedNode.key, clickedNode.value, clickedNode.type);
+            }
+        }
+    }
+
+    private boolean isResetButtonClicked(float x, float y) {
+        float buttonX = getWidth() - RESET_BUTTON_SIZE - RESET_BUTTON_MARGIN;
+        float buttonY = RESET_BUTTON_MARGIN;
+        float centerX = buttonX + RESET_BUTTON_SIZE / 2f;
+        float centerY = buttonY + RESET_BUTTON_SIZE / 2f;
+
+        float dx = x - centerX;
+        float dy = y - centerY;
+        float distance = (float) Math.sqrt(dx * dx + dy * dy);
+
+        return distance <= RESET_BUTTON_SIZE / 2f;
+    }
+
+    private void resetView() {
+        scale = 1.0f;
+        offsetX = getWidth() / 2f;
+        offsetY = TREE_TOP_MARGIN;
+        invalidate();
+    }
+
+    private CardNode getCardAtPosition(float x, float y) {
+        for (int i = nodes.size() - 1; i >= 0; i--) {
+            CardNode node = nodes.get(i);
+            if (shouldShowNode(node)
+                    && x >= node.x
+                    && x <= node.x + CARD_WIDTH
+                    && y >= node.y
+                    && y <= node.y + CARD_HEIGHT) {
+                return node;
+            }
+        }
+        return null;
+    }
+
+    private class ScaleListener extends ScaleGestureDetector.SimpleOnScaleGestureListener {
+        private float startScale;
+
+        @Override
+        public boolean onScaleBegin(ScaleGestureDetector detector) {
+            isScaling = true;
+            isDragging = false;
+            startScale = scale;
+            return true;
+        }
+
+        @Override
+        public boolean onScale(ScaleGestureDetector detector) {
+            float scaleFactor = detector.getScaleFactor();
+            float newScale = scale * scaleFactor;
+
+            newScale = Math.max(MIN_SCALE, Math.min(newScale, MAX_SCALE));
+
+            float focusX = detector.getFocusX();
+            float focusY = detector.getFocusY();
+
+            // Calculate new offset to keep focus point stationary
+            float worldX = (focusX - offsetX) / scale;
+            float worldY = (focusY - offsetY) / scale;
+
+            offsetX = focusX - worldX * newScale;
+            offsetY = focusY - worldY * newScale;
+
+            scale = newScale;
+
+            invalidate();
+            return true;
+        }
+
+        @Override
+        public void onScaleEnd(ScaleGestureDetector detector) {
+            // Keep the state, don't reset here
+            // This prevents the snap
+        }
+    }
+
+    private static class CardNode {
+        String key;
+        String value;
+        String type;
+        float x;
+        float y;
+        int level;
+
+        CardNode(String key, String value, String type, float x, float y, int level) {
+            this.key = key;
+            this.value = value;
+            this.type = type;
+            this.x = x;
+            this.y = y;
+            this.level = level;
+        }
+    }
+
+    private static class Connection {
+        CardNode from;
+        CardNode to;
+
+        Connection(CardNode from, CardNode to) {
+            this.from = from;
+            this.to = to;
+        }
+    }
+}

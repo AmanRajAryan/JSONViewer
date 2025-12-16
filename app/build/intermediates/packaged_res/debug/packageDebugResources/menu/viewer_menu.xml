@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+    
+    <item
+        android:id="@+id/action_search"
+        android:icon="@drawable/ic_search"
+        android:title="Search"
+        app:showAsAction="ifRoom|collapseActionView"
+        app:actionViewClass="androidx.appcompat.widget.SearchView"/>
+    
+    <item
+        android:id="@+id/action_copy"
+        android:icon="@drawable/ic_copy"
+        android:title="Copy All"
+        app:showAsAction="ifRoom"/>
+    
+    <item
+        android:id="@+id/action_share"
+        android:icon="@drawable/ic_share"
+        android:title="Share"
+        app:showAsAction="ifRoom"/>
+        
+</menu>
