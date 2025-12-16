@@ -3,6 +3,7 @@ build/
 **/build/
 .idea/
 *.iml
+.acside/
 .local.properties
 .externalNativeBuild/
 .cxx/
