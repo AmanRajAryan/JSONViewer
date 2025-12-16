@@ -1,0 +1,6 @@
+![MainActivity](Screenshots/Screenshot_2025-12-16-19-03-32-961_aman.jsonviewer-edit.jpg)
+![tree](Screenshots/Screenshot_2025-12-16-19-06-18-273_aman.jsonviewer.jpg)
+![pretty](Screenshots/Screenshot_2025-12-16-19-07-00-521_aman.jsonviewer.jpg)
+![flow](Screenshots/Screenshot_2025-12-16-19-07-59-069_aman.jsonviewer.jpg)
+![cards](Screenshots/Screenshot_2025-12-16-19-08-03-338_aman.jsonviewer.jpg)
+![raw](Screenshots/Screenshot_2025-12-16-19-08-06-197_aman.jsonviewer.jpg)
