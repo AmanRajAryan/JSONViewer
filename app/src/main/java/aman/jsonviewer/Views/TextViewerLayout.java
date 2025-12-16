@@ -1,14 +1,12 @@
 package aman.jsonviewer;
 
 import android.content.Context;
-import android.graphics.Canvas;
-import android.graphics.Paint;
 import android.graphics.Rect;
-import android.os.Handler;
 import android.util.AttributeSet;
 import android.view.MotionEvent;
 import android.view.VelocityTracker;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.widget.HorizontalScrollView;
 import android.widget.OverScroller;
@@ -34,6 +32,7 @@ public class TextViewerLayout extends ViewGroup {
     private static final int MIN_FLING_VELOCITY = 50;
     private static final int BASE_MAX_FLING_VELOCITY = 10000;
     private int maxFlingVelocity = BASE_MAX_FLING_VELOCITY;
+    private int touchSlop;
 
     public TextViewerLayout(Context context) {
         super(context);
@@ -48,6 +47,8 @@ public class TextViewerLayout extends ViewGroup {
     private void init(Context context) {
         setWillNotDraw(false);
         setBackgroundColor(0xFF121212);
+        
+        touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
 
         scroller = new OverScroller(context);
 
@@ -65,7 +66,17 @@ public class TextViewerLayout extends ViewGroup {
                         android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
                         android.widget.FrameLayout.LayoutParams.MATCH_PARENT));
 
-        horizontalScrollView = new HorizontalScrollView(context);
+        // --- FIX START: Override HorizontalScrollView to prevent auto-scroll focus snap ---
+        horizontalScrollView = new HorizontalScrollView(context) {
+            @Override
+            public boolean requestChildRectangleOnScreen(View child, Rect rectangle, boolean immediate) {
+                // Return false (or true) without calling super to ignore the request.
+                // This prevents the view from snapping to X=0 when a TextView gains focus.
+                return false;
+            }
+        };
+        // --- FIX END ---
+
         horizontalScrollView.setHorizontalScrollBarEnabled(false);
         horizontalScrollView.setOverScrollMode(View.OVER_SCROLL_NEVER);
         horizontalScrollView.setClipToPadding(false);
@@ -151,7 +162,6 @@ public class TextViewerLayout extends ViewGroup {
 
         if (!enableWrapping) {
             int totalWidth = maxContentWidth + SCROLLBAR_SIZE + 120;
-            
             recyclerView.setMinimumWidth(totalWidth);
             recyclerView.setLayoutParams(
                     new android.widget.FrameLayout.LayoutParams(
@@ -251,7 +261,36 @@ public class TextViewerLayout extends ViewGroup {
     public boolean onInterceptTouchEvent(MotionEvent ev) {
         if (isTouchOnScrollBar(ev, verticalScrollBar)) return false;
         if (isTouchOnScrollBar(ev, horizontalScrollBar)) return false;
-        return true;
+
+        final int action = ev.getAction();
+        
+        if (action == MotionEvent.ACTION_MOVE && isScrolling) {
+            return true;
+        }
+
+        switch (action & MotionEvent.ACTION_MASK) {
+            case MotionEvent.ACTION_DOWN:
+                lastTouchX = ev.getX();
+                lastTouchY = ev.getY();
+                isScrolling = false;
+                scroller.abortAnimation();
+                return false; 
+
+            case MotionEvent.ACTION_MOVE:
+                final float x = ev.getX();
+                final float y = ev.getY();
+                final float dx = Math.abs(x - lastTouchX);
+                final float dy = Math.abs(y - lastTouchY);
+                
+                if (dx > touchSlop || dy > touchSlop) {
+                    isScrolling = true;
+                    lastTouchX = x;
+                    lastTouchY = y;
+                    return true;
+                }
+                break;
+        }
+        return false;
     }
 
     private boolean isTouchOnScrollBar(MotionEvent ev, View scrollBar) {
@@ -277,25 +316,24 @@ public class TextViewerLayout extends ViewGroup {
                 return true;
 
             case MotionEvent.ACTION_MOVE:
-                if (isScrolling) {
-                    float deltaX = lastTouchX - event.getX();
-                    float deltaY = lastTouchY - event.getY();
-                    recyclerView.scrollBy(0, (int) deltaY);
-                    
-                    int currentScrollX = horizontalScrollView.getScrollX();
-                    int viewWidth = horizontalScrollView.getWidth();
-                    int contentWidth = recyclerView.getWidth();
-                    int maxScrollX = Math.max(0, contentWidth - viewWidth);
-                    int newScrollX = Math.max(0, Math.min(maxScrollX, currentScrollX + (int) deltaX));
-                    horizontalScrollView.scrollTo(newScrollX, 0);
-
+                if (!isScrolling) {
+                    isScrolling = true;
                     lastTouchX = event.getX();
                     lastTouchY = event.getY();
-                    updateVerticalScrollBar();
-                    updateHorizontalScrollBar();
                     return true;
                 }
-                break;
+                
+                float deltaX = lastTouchX - event.getX();
+                float deltaY = lastTouchY - event.getY();
+                
+                recyclerView.scrollBy(0, (int) deltaY);
+                horizontalScrollView.scrollBy((int) deltaX, 0);
+
+                lastTouchX = event.getX();
+                lastTouchY = event.getY();
+                updateVerticalScrollBar();
+                updateHorizontalScrollBar();
+                return true;
 
             case MotionEvent.ACTION_UP:
                 if (isScrolling) {
@@ -316,7 +354,7 @@ public class TextViewerLayout extends ViewGroup {
                     velocityTracker = null;
                     return true;
                 }
-                break;
+                return true;
 
             case MotionEvent.ACTION_CANCEL:
                 isScrolling = false;
@@ -335,6 +373,7 @@ public class TextViewerLayout extends ViewGroup {
             int currX = scroller.getCurrX();
             int currY = scroller.getCurrY();
             int maxX = Math.max(0, recyclerView.getWidth() - horizontalScrollView.getWidth());
+            
             currX = Math.max(0, Math.min(maxX, currX));
             horizontalScrollView.scrollTo(currX, 0);
             
@@ -359,9 +398,6 @@ public class TextViewerLayout extends ViewGroup {
         }
     }
 
-    /**
-     * IMPORTANT: Trim adapter cache to save memory
-     */
     public void trimCache() {
         if (adapter != null) {
             adapter.trimCache();
