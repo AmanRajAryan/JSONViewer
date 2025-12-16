@@ -5,7 +5,10 @@
     android:layout_height="match_parent"
     android:background="#121212">
 
-   
+    <io.github.rosemoe.sora.widget.CodeEditor
+        android:id="@+id/codeEditor"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"/>
 
     <ProgressBar
         android:id="@+id/progressBar"

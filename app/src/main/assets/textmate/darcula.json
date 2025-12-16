@@ -1,0 +1,26 @@
+{
+  "name": "Darcula",
+  "type": "dark",
+  "colors": {
+    "editor.background": "#121212",
+    "editor.foreground": "#a9b7c6"
+  },
+  "tokenColors": [
+    {
+      "scope": "string",
+      "settings": { "foreground": "#6a8759" }
+    },
+    {
+      "scope": "constant.numeric",
+      "settings": { "foreground": "#6897bb" }
+    },
+    {
+      "scope": "keyword",
+      "settings": { "foreground": "#cc7832" }
+    },
+    {
+      "scope": "support.type.property-name.json",
+      "settings": { "foreground": "#9876aa" }
+    }
+  ]
+}

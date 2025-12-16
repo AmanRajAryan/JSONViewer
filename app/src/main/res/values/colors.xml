@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="background_dark">#121212</color>
-    <color name="surface_dark">#1E1E1E</color>
+    <color name="surface_dark">#121212</color>
     <color name="primary_cyan">#00BCD4</color>
     <color name="accent_purple">#9C27B0</color>
     <color name="accent_orange">#FF9800</color>

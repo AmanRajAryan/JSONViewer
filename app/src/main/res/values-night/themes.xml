@@ -2,5 +2,10 @@
   <style name="Base.AppTheme" parent="Theme.Material3.DayNight.NoActionBar">
   </style>
 
-  <style name="AppTheme" parent="Base.AppTheme" />
+  <style name="AppTheme" parent="Base.AppTheme">
+  <item name="android:statusBarColor">#121212</item>
+        <item name="android:windowLightStatusBar">false</item>
+
+  
+  </style>
 </resources>

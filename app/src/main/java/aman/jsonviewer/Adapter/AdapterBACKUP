@@ -2,19 +2,13 @@ package aman.jsonviewer;
 
 import android.content.Context;
 import android.graphics.Paint;
-import android.graphics.Rect;
-import android.os.Build;
 import android.text.Spannable;
 import android.text.SpannableStringBuilder;
 import android.text.style.BackgroundColorSpan;
+import android.util.Log;
 import android.util.LruCache;
-import android.view.ActionMode;
-import android.view.Menu;
-import android.view.MenuItem;
 import android.view.MotionEvent;
-import android.view.View;
 import android.view.ViewGroup;
-import android.view.textclassifier.TextClassifier;
 import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
@@ -40,6 +34,7 @@ public class TextLineAdapter extends RecyclerView.Adapter<TextLineAdapter.LineVi
     public void setLines(String[] lines) {
         this.lines = lines;
         
+        // Optimize cache size based on content
         int cacheSize;
         if (lines.length < 1000) cacheSize = TINY_CACHE;
         else if (lines.length < 5000) cacheSize = SMALL_CACHE;
@@ -100,6 +95,7 @@ public class TextLineAdapter extends RecyclerView.Adapter<TextLineAdapter.LineVi
         String longestLine = "";
         int maxLength = 0;
         
+        // Scan ALL lines to prevent cropping
         for (String line : lines) {
             if (line.length() > maxLength) {
                 maxLength = line.length();
@@ -108,7 +104,7 @@ public class TextLineAdapter extends RecyclerView.Adapter<TextLineAdapter.LineVi
         }
 
         float width = paint.measureText(longestLine);
-        maxLineWidth = (int) Math.ceil(width) + 100; 
+        maxLineWidth = (int) Math.ceil(width) + 100; // Extra padding
     }
 
     @NonNull
@@ -116,6 +112,7 @@ public class TextLineAdapter extends RecyclerView.Adapter<TextLineAdapter.LineVi
     public LineViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
         if (context == null) context = parent.getContext();
 
+        // Use custom SelectableTextView for better touch handling
         SelectableTextView textView = new SelectableTextView(parent.getContext());
         textView.setTextSize(12);
         textView.setTypeface(android.graphics.Typeface.MONOSPACE);
@@ -128,6 +125,7 @@ public class TextLineAdapter extends RecyclerView.Adapter<TextLineAdapter.LineVi
             textView.setSingleLine(false);
             textView.setMaxLines(Integer.MAX_VALUE);
         } else {
+            // Apply correct width
             int width = maxLineWidth > 0 ? maxLineWidth : ViewGroup.LayoutParams.WRAP_CONTENT;
             textView.setLayoutParams(new ViewGroup.LayoutParams(width, ViewGroup.LayoutParams.WRAP_CONTENT));
             textView.setSingleLine(true);
@@ -136,12 +134,7 @@ public class TextLineAdapter extends RecyclerView.Adapter<TextLineAdapter.LineVi
         }
 
         textView.setTextColor(0xFFFFFFFF);
-        textView.setTextIsSelectable(true); 
-
-        // Disable "Smart" features to reduce system interference
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            textView.setTextClassifier(TextClassifier.NO_OP);
-        }
+        textView.setTextIsSelectable(true); // Native selection allowed
 
         return new LineViewHolder(textView);
     }
@@ -175,7 +168,9 @@ public class TextLineAdapter extends RecyclerView.Adapter<TextLineAdapter.LineVi
                             Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
                     );
                 }
-            } catch (Exception e) { }
+            } catch (Exception e) {
+                // Ignore
+            }
         }
 
         spanCache.put(position, processed);
@@ -183,72 +178,27 @@ public class TextLineAdapter extends RecyclerView.Adapter<TextLineAdapter.LineVi
     }
 
     @Override
-    public int getItemCount() { return lines.length; }
+    public int getItemCount() {
+        return lines.length;
+    }
     
     public void trimCache() {
-        if (spanCache != null) spanCache.trimToSize(5);
+        if (spanCache != null) {
+            spanCache.trimToSize(5);
+        }
     }
 
+    /**
+     * Helper Class: Handles conflict between Scrolling and Text Selection.
+     * Logic: If finger moves > 20px, it gives control back to Parent (Scroll).
+     * If finger stays still, it keeps control (Select).
+     */
     private static class SelectableTextView extends androidx.appcompat.widget.AppCompatTextView {
         private float startX, startY;
         private static final int MOVEMENT_THRESHOLD = 20;
         
         public SelectableTextView(Context context) {
             super(context);
-        }
-        
-        // Intercept standard Action Mode
-        @Override
-        public ActionMode startActionMode(ActionMode.Callback callback) {
-            ActionMode.Callback wrappedCallback = new ActionModeCallbackWrapper(callback);
-            return super.startActionMode(wrappedCallback);
-        }
-
-        // Intercept floating Action Mode (Android M+)
-        @Override
-        public ActionMode startActionMode(ActionMode.Callback callback, int type) {
-            ActionMode.Callback wrappedCallback = new ActionModeCallbackWrapper(callback);
-            return super.startActionMode(wrappedCallback, type);
-        }
-
-        // Wrapper to hijack the menu creation
-        private static class ActionModeCallbackWrapper extends ActionMode.Callback2 {
-            private final ActionMode.Callback wrapped;
-
-            public ActionModeCallbackWrapper(ActionMode.Callback wrapped) {
-                this.wrapped = wrapped;
-            }
-
-            @Override
-            public boolean onCreateActionMode(ActionMode mode, Menu menu) {
-                boolean result = wrapped.onCreateActionMode(mode, menu);
-                menu.clear(); // Clear immediately
-                return result;
-            }
-
-            @Override
-            public boolean onPrepareActionMode(ActionMode mode, Menu menu) {
-                boolean result = wrapped.onPrepareActionMode(mode, menu);
-                menu.clear(); // Clear again
-                return result; 
-            }
-
-            @Override
-            public boolean onActionItemClicked(ActionMode mode, MenuItem item) {
-                return wrapped.onActionItemClicked(mode, item);
-            }
-
-            @Override
-            public void onDestroyActionMode(ActionMode mode) {
-                wrapped.onDestroyActionMode(mode);
-            }
-            
-            @Override
-            public void onGetContentRect(ActionMode mode, View view, Rect outRect) {
-                // HACK: Send the "menu position" to coordinates way off-screen.
-                // This forces the system bubble (and the HyperOS icon) to render invisible.
-                outRect.set(-100000, -100000, -99000, -99000);
-            }
         }
         
         @Override
@@ -264,9 +214,11 @@ public class TextLineAdapter extends RecyclerView.Adapter<TextLineAdapter.LineVi
                     float dx = Math.abs(event.getX() - startX);
                     float dy = Math.abs(event.getY() - startY);
                     if (dx > MOVEMENT_THRESHOLD || dy > MOVEMENT_THRESHOLD) {
+                        // User is scrolling -> Give control to parent
                         getParent().requestDisallowInterceptTouchEvent(false);
                         return false; 
                     } else {
+                        // User is selecting -> Keep control
                         getParent().requestDisallowInterceptTouchEvent(true);
                     }
                     break;
@@ -276,6 +228,7 @@ public class TextLineAdapter extends RecyclerView.Adapter<TextLineAdapter.LineVi
                     getParent().requestDisallowInterceptTouchEvent(false);
                     break;
             }
+            
             return super.onTouchEvent(event);
         }
     }

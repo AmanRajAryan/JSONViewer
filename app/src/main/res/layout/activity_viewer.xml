@@ -17,7 +17,7 @@
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize"
-            android:background="#1E1E1E"
+            android:background="#121212"
             app:titleTextColor="#FFFFFF"
             app:navigationIcon="?attr/homeAsUpIndicator"
             app:navigationIconTint="#FFFFFF"/>
@@ -26,7 +26,7 @@
             android:id="@+id/tabLayout"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:background="#1E1E1E"
+            android:background="#121212"
             app:tabTextColor="#888888"
             app:tabSelectedTextColor="#00BCD4"
             app:tabIndicatorColor="#00BCD4"

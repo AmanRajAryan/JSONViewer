@@ -11,6 +11,8 @@ import android.view.Gravity;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
+import android.view.Window;
+import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -54,7 +56,7 @@ public class ViewerActivity extends AppCompatActivity {
     };
 
     private Map<String, CachedData> fragmentCache = new HashMap<>();
-    
+
     private TextView searchPreviousBtn;
     private TextView searchNextBtn;
     private TextView searchCounterText;
@@ -75,10 +77,20 @@ public class ViewerActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_viewer);
 
+        // Hides both top and bottom bars
+        View decorView = getWindow().getDecorView();
+        int uiOptions =
+                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        
+                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
+        decorView.setSystemUiVisibility(uiOptions);
+
+        
+
         // CRITICAL FIX: Do not restore jsonData from savedInstanceState
         // Always get it from JsonDataHolder or Intent
         jsonData = JsonDataHolder.getInstance().getJsonData();
-        
+
         if (jsonData == null) {
             jsonData = getIntent().getStringExtra("json_data");
             // Store it in holder for future use
@@ -116,19 +128,20 @@ public class ViewerActivity extends AppCompatActivity {
         } else {
             loadFragment(0);
         }
-        
+
         logMemoryUsage();
     }
 
     @Override
     protected void onSaveInstanceState(@NonNull Bundle outState) {
         super.onSaveInstanceState(outState);
-        // CRITICAL FIX: Do NOT save jsonData - it's too large and causes TransactionTooLargeException
+        // CRITICAL FIX: Do NOT save jsonData - it's too large and causes
+        // TransactionTooLargeException
         // Only save UI state
         outState.putString("search_query", currentSearchQuery);
         outState.putInt("selected_tab", tabLayout.getSelectedTabPosition());
     }
-    
+
     @Override
     protected void onDestroy() {
         super.onDestroy();
@@ -139,18 +152,18 @@ public class ViewerActivity extends AppCompatActivity {
                     trimFragmentCache(fragment);
                 }
             }
-            
+
             JsonDataHolder.getInstance().clear();
             fragmentCache.clear();
-            
+
             System.gc();
         }
     }
-    
+
     @Override
     public void onTrimMemory(int level) {
         super.onTrimMemory(level);
-        
+
         // System is asking us to trim memory
         if (level >= TRIM_MEMORY_RUNNING_LOW) {
             // Trim caches of hidden fragments
@@ -159,7 +172,7 @@ public class ViewerActivity extends AppCompatActivity {
                     trimFragmentCache(fragment);
                 }
             }
-            
+
             fragmentCache.clear();
             System.gc();
         }
@@ -249,10 +262,8 @@ public class ViewerActivity extends AppCompatActivity {
                     });
         }
     }
-    
-    /**
-     * IMPORTANT: Trim cache of hidden fragments
-     */
+
+    /** IMPORTANT: Trim cache of hidden fragments */
     private void trimFragmentCache(Fragment fragment) {
         try {
             if (fragment instanceof PrettyViewFragment) {
@@ -296,22 +307,23 @@ public class ViewerActivity extends AppCompatActivity {
                         return true;
                     }
                 });
-        
-        searchItem.setOnActionExpandListener(new MenuItem.OnActionExpandListener() {
-            @Override
-            public boolean onMenuItemActionExpand(MenuItem item) {
-                updateSearchNavigationVisibility();
-                return true;
-            }
 
-            @Override
-            public boolean onMenuItemActionCollapse(MenuItem item) {
-                currentSearchQuery = "";
-                performSearch("");
-                return true;
-            }
-        });
-        
+        searchItem.setOnActionExpandListener(
+                new MenuItem.OnActionExpandListener() {
+                    @Override
+                    public boolean onMenuItemActionExpand(MenuItem item) {
+                        updateSearchNavigationVisibility();
+                        return true;
+                    }
+
+                    @Override
+                    public boolean onMenuItemActionCollapse(MenuItem item) {
+                        currentSearchQuery = "";
+                        performSearch("");
+                        return true;
+                    }
+                });
+
         updateSearchNavigationVisibility();
 
         return true;
@@ -320,21 +332,21 @@ public class ViewerActivity extends AppCompatActivity {
     private void setupSearchNavigation(SearchView searchView) {
         LinearLayout mainContainer = new LinearLayout(this);
         mainContainer.setOrientation(LinearLayout.VERTICAL);
-        mainContainer.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        ));
+        mainContainer.setLayoutParams(
+                new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT));
         mainContainer.setGravity(Gravity.CENTER);
         mainContainer.setVisibility(View.GONE);
-        
+
         searchNavContainer = new LinearLayout(this);
         searchNavContainer.setOrientation(LinearLayout.HORIZONTAL);
-        searchNavContainer.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        ));
+        searchNavContainer.setLayoutParams(
+                new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT));
         searchNavContainer.setGravity(Gravity.CENTER);
-        
+
         searchPreviousBtn = new TextView(this);
         searchPreviousBtn.setText("<");
         searchPreviousBtn.setTextColor(0xFFFFFFFF);
@@ -342,7 +354,7 @@ public class ViewerActivity extends AppCompatActivity {
         searchPreviousBtn.setPadding(16, 8, 30, 8);
         searchPreviousBtn.setBackground(createRippleDrawable());
         searchPreviousBtn.setOnClickListener(v -> navigateSearchPrevious());
-        
+
         searchNextBtn = new TextView(this);
         searchNextBtn.setText(">");
         searchNextBtn.setTextColor(0xFFFFFFFF);
@@ -350,27 +362,27 @@ public class ViewerActivity extends AppCompatActivity {
         searchNextBtn.setPadding(30, 8, 16, 8);
         searchNextBtn.setBackground(createRippleDrawable());
         searchNextBtn.setOnClickListener(v -> navigateSearchNext());
-        
+
         searchNavContainer.addView(searchPreviousBtn);
         searchNavContainer.addView(searchNextBtn);
-        
+
         searchCounterText = new TextView(this);
         searchCounterText.setText("0/0");
         searchCounterText.setTextColor(0xFFAAAAAA);
         searchCounterText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         searchCounterText.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams counterParams = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        );
+        LinearLayout.LayoutParams counterParams =
+                new LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.WRAP_CONTENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT);
         counterParams.topMargin = -4;
         searchCounterText.setLayoutParams(counterParams);
-        
+
         mainContainer.addView(searchNavContainer);
         mainContainer.addView(searchCounterText);
-        
+
         this.searchNavContainer = mainContainer;
-        
+
         LinearLayout searchLayout = (LinearLayout) searchView.getChildAt(0);
         searchLayout.addView(mainContainer);
     }
@@ -378,14 +390,13 @@ public class ViewerActivity extends AppCompatActivity {
     private android.graphics.drawable.Drawable createRippleDrawable() {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
             return new android.graphics.drawable.RippleDrawable(
-                    android.content.res.ColorStateList.valueOf(0x40FFFFFF),
-                    null,
-                    null
-            );
+                    android.content.res.ColorStateList.valueOf(0x40FFFFFF), null, null);
         } else {
-            android.graphics.drawable.StateListDrawable drawable = new android.graphics.drawable.StateListDrawable();
-            android.graphics.drawable.ColorDrawable pressed = new android.graphics.drawable.ColorDrawable(0x40FFFFFF);
-            drawable.addState(new int[]{android.R.attr.state_pressed}, pressed);
+            android.graphics.drawable.StateListDrawable drawable =
+                    new android.graphics.drawable.StateListDrawable();
+            android.graphics.drawable.ColorDrawable pressed =
+                    new android.graphics.drawable.ColorDrawable(0x40FFFFFF);
+            drawable.addState(new int[] {android.R.attr.state_pressed}, pressed);
             return drawable;
         }
     }
@@ -416,25 +427,25 @@ public class ViewerActivity extends AppCompatActivity {
         updateSearchNavigationVisibility();
         updateSearchCounter();
     }
-    
+
     private void updateSearchNavigationVisibility() {
         if (searchNavContainer == null) return;
-        
-        boolean showNavigation = !currentSearchQuery.isEmpty() && 
-                                currentFragment instanceof TreeViewFragment;
-        
+
+        boolean showNavigation =
+                !currentSearchQuery.isEmpty() && currentFragment instanceof TreeViewFragment;
+
         searchNavContainer.setVisibility(showNavigation ? View.VISIBLE : View.GONE);
     }
-    
+
     private void updateSearchCounter() {
         if (searchCounterText == null) return;
-        
+
         if (currentFragment instanceof TreeViewFragment) {
             TreeViewFragment treeFragment = (TreeViewFragment) currentFragment;
             if (treeFragment.getAdapter() != null) {
                 int current = treeFragment.getAdapter().getCurrentMatchIndex() + 1;
                 int total = treeFragment.getAdapter().getTotalMatches();
-                
+
                 if (total > 0) {
                     searchCounterText.setText(current + "/" + total);
                 } else {
@@ -443,7 +454,7 @@ public class ViewerActivity extends AppCompatActivity {
             }
         }
     }
-    
+
     private void navigateSearchNext() {
         if (currentFragment instanceof TreeViewFragment) {
             TreeViewFragment treeFragment = (TreeViewFragment) currentFragment;
@@ -453,7 +464,7 @@ public class ViewerActivity extends AppCompatActivity {
             }
         }
     }
-    
+
     private void navigateSearchPrevious() {
         if (currentFragment instanceof TreeViewFragment) {
             TreeViewFragment treeFragment = (TreeViewFragment) currentFragment;
@@ -466,12 +477,13 @@ public class ViewerActivity extends AppCompatActivity {
 
     private void copyToClipboard() {
         try {
-        	ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-        ClipData clip = ClipData.newPlainText("JSON", jsonData);
-        clipboard.setPrimaryClip(clip);
-        Toast.makeText(this, "Copied to clipboard", Toast.LENGTH_SHORT).show();
-        } catch(Exception err) {
-        	Toast.makeText(getApplicationContext(),err.toString() , 1).show();
+            ClipboardManager clipboard =
+                    (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            ClipData clip = ClipData.newPlainText("JSON", jsonData);
+            clipboard.setPrimaryClip(clip);
+            Toast.makeText(this, "Copied to clipboard", Toast.LENGTH_SHORT).show();
+        } catch (Exception err) {
+            Toast.makeText(getApplicationContext(), err.toString(), 1).show();
         }
     }
 
