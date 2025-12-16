@@ -34,7 +34,6 @@ public class TextViewerLayout extends ViewGroup {
     private static final int MIN_FLING_VELOCITY = 50;
     private static final int BASE_MAX_FLING_VELOCITY = 10000;
     private int maxFlingVelocity = BASE_MAX_FLING_VELOCITY;
-    private static final int SCROLL_THRESHOLD = 10;
 
     public TextViewerLayout(Context context) {
         super(context);
@@ -252,32 +251,7 @@ public class TextViewerLayout extends ViewGroup {
     public boolean onInterceptTouchEvent(MotionEvent ev) {
         if (isTouchOnScrollBar(ev, verticalScrollBar)) return false;
         if (isTouchOnScrollBar(ev, horizontalScrollBar)) return false;
-        
-        // Allow child views (TextViews) to handle touch for selection
-        if (ev.getAction() == MotionEvent.ACTION_DOWN) {
-            // Stop any ongoing fling immediately when user touches screen
-            if (!scroller.isFinished()) {
-                scroller.abortAnimation();
-            }
-            
-            // Don't intercept on ACTION_DOWN to give children a chance
-            lastTouchX = ev.getX();
-            lastTouchY = ev.getY();
-            isScrolling = false;
-            return false;
-        }
-        
-        // For MOVE events, only intercept if we're clearly scrolling
-        if (ev.getAction() == MotionEvent.ACTION_MOVE) {
-            float deltaX = Math.abs(ev.getX() - lastTouchX);
-            float deltaY = Math.abs(ev.getY() - lastTouchY);
-            if (deltaX > SCROLL_THRESHOLD || deltaY > SCROLL_THRESHOLD) {
-                isScrolling = true;
-                return true;
-            }
-        }
-        
-        return isScrolling;
+        return true;
     }
 
     private boolean isTouchOnScrollBar(MotionEvent ev, View scrollBar) {
@@ -296,25 +270,16 @@ public class TextViewerLayout extends ViewGroup {
 
         switch (event.getAction()) {
             case MotionEvent.ACTION_DOWN:
-                // Stop any ongoing fling animation
-                if (!scroller.isFinished()) {
-                    scroller.abortAnimation();
-                }
+                if (!scroller.isFinished()) scroller.abortAnimation();
                 lastTouchX = event.getX();
                 lastTouchY = event.getY();
-                isScrolling = false;
+                isScrolling = true;
                 return true;
 
             case MotionEvent.ACTION_MOVE:
-                float deltaX = lastTouchX - event.getX();
-                float deltaY = lastTouchY - event.getY();
-                
-                // Only start scrolling if movement is significant
-                if (!isScrolling && (Math.abs(deltaX) > SCROLL_THRESHOLD || Math.abs(deltaY) > SCROLL_THRESHOLD)) {
-                    isScrolling = true;
-                }
-                
                 if (isScrolling) {
+                    float deltaX = lastTouchX - event.getX();
+                    float deltaY = lastTouchY - event.getY();
                     recyclerView.scrollBy(0, (int) deltaY);
                     
                     int currentScrollX = horizontalScrollView.getScrollX();
@@ -346,13 +311,12 @@ public class TextViewerLayout extends ViewGroup {
                         scroller.fling(startX, startY, -velocityX, -velocityY, 0, maxX, 0, maxY);
                         postInvalidateOnAnimation();
                     }
-                }
-                isScrolling = false;
-                if (velocityTracker != null) {
+                    isScrolling = false;
                     velocityTracker.recycle();
                     velocityTracker = null;
+                    return true;
                 }
-                return true;
+                break;
 
             case MotionEvent.ACTION_CANCEL:
                 isScrolling = false;
