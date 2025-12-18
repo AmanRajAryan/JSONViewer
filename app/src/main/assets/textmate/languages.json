@@ -3,7 +3,8 @@
     {
       "name": "json",
       "scopeName": "source.json",
-      "grammar": "textmate/json/json.tmLanguage.json"
+      "grammar": "textmate/json/json.tmLanguage.json",
+      "languageConfiguration": "textmate/language-configuration.json"
     }
   ]
 }

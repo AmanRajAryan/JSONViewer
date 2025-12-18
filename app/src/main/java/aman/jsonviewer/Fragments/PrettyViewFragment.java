@@ -63,6 +63,11 @@ public class PrettyViewFragment extends Fragment implements ViewerActivity.Searc
         codeEditor.setTextSize(14f);
         codeEditor.setWordwrap(false);
         codeEditor.setPinLineNumber(true);
+        codeEditor.setBlockLineEnabled(true);
+        
+        codeEditor.setBlockLineEnabled(true); // Enables the visual vertical lines for blocks
+
+        
 
         // --- 3. Custom Colors ---
         EditorColorScheme scheme = codeEditor.getColorScheme();
