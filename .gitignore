@@ -9,3 +9,5 @@ build/
 .cxx/
 *.log
 .DS_Store
+*.jks
+*.keystore
