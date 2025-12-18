@@ -23,6 +23,7 @@ import org.json.JSONObject;
 public class MainActivity extends AppCompatActivity {
     
     private ActivityResultLauncher<String> filePickerLauncher;
+    private boolean isHandlingIntent = false;
     
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -40,6 +41,32 @@ public class MainActivity extends AppCompatActivity {
         );
         
         setupViews();
+        
+        // Handle incoming intent (when app is opened via file manager)
+        handleIncomingIntent(getIntent());
+    }
+    
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleIncomingIntent(intent);
+    }
+    
+    private void handleIncomingIntent(Intent intent) {
+        if (intent == null || isHandlingIntent) return;
+        
+        String action = intent.getAction();
+        
+        // Check if the app was opened to view a file
+        if (Intent.ACTION_VIEW.equals(action)) {
+            Uri uri = intent.getData();
+            if (uri != null) {
+                isHandlingIntent = true;
+                // Load JSON from the file and open viewer directly
+                loadJsonFromFile(uri);
+            }
+        }
     }
     
     private void setupViews() {
@@ -47,10 +74,12 @@ public class MainActivity extends AppCompatActivity {
         MaterialCardView fileCard = findViewById(R.id.fileCard);
         MaterialCardView urlCard = findViewById(R.id.urlCard);
         
-        // Animate cards on start
-        animateCard(pasteCard, 0);
-        animateCard(fileCard, 100);
-        animateCard(urlCard, 200);
+        // Animate cards on start only if not handling intent
+        if (!isHandlingIntent) {
+            animateCard(pasteCard, 0);
+            animateCard(fileCard, 100);
+            animateCard(urlCard, 200);
+        }
         
         pasteCard.setOnClickListener(v -> showPasteDialog());
         fileCard.setOnClickListener(v -> openFilePicker());
@@ -111,19 +140,27 @@ public class MainActivity extends AppCompatActivity {
     private void loadJsonFromFile(Uri uri) {
         try {
             InputStream inputStream = getContentResolver().openInputStream(uri);
+            if (inputStream == null) {
+                Toast.makeText(this, "Cannot open file", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            
             BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
             StringBuilder builder = new StringBuilder();
             String line;
             
             while ((line = reader.readLine()) != null) {
-                builder.append(line).append("\n"); // Preserve line breaks
+                builder.append(line).append("\n");
             }
             reader.close();
             
-            validateAndOpenViewer(builder.toString());
+            String jsonText = builder.toString();
+            validateAndOpenViewer(jsonText);
+            
         } catch (Exception e) {
             Toast.makeText(this, "Error reading file: " + e.getMessage(), 
                 Toast.LENGTH_LONG).show();
+            e.printStackTrace();
         }
     }
     
@@ -143,7 +180,7 @@ public class MainActivity extends AppCompatActivity {
                 String line;
                 
                 while ((line = reader.readLine()) != null) {
-                    builder.append(line).append("\n"); // Preserve line breaks
+                    builder.append(line).append("\n");
                 }
                 reader.close();
                 
@@ -159,8 +196,8 @@ public class MainActivity extends AppCompatActivity {
     }
     
     private boolean validateAndOpenViewer(String jsonText) {
-        if (jsonText.isEmpty()) {
-            Toast.makeText(this, "Please enter JSON data", Toast.LENGTH_SHORT).show();
+        if (jsonText == null || jsonText.trim().isEmpty()) {
+            Toast.makeText(this, "No JSON data found", Toast.LENGTH_SHORT).show();
             return false;
         }
         
@@ -175,19 +212,23 @@ public class MainActivity extends AppCompatActivity {
                 throw new Exception("Invalid JSON format");
             }
             
-            // FIXED: Store in singleton instead of Intent extra to avoid TransactionTooLargeException
+            // Store in singleton instead of Intent extra to avoid TransactionTooLargeException
             JsonDataHolder.getInstance().setJsonData(jsonText);
             
             // Open viewer activity
             Intent intent = new Intent(this, ViewerActivity.class);
-            // No longer passing data through intent - using singleton instead
             startActivity(intent);
             overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
+            
+            // Reset flag after opening viewer
+            isHandlingIntent = false;
+            
             return true;
             
         } catch (Exception e) {
             Toast.makeText(this, "Invalid JSON: " + e.getMessage(), 
                 Toast.LENGTH_LONG).show();
+            isHandlingIntent = false;
             return false;
         }
     }

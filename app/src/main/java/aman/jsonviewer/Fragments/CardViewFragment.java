@@ -35,7 +35,6 @@ public class CardViewFragment extends Fragment implements ViewerActivity.Searcha
     private ExecutorService executor = Executors.newSingleThreadExecutor();
     private Handler mainHandler = new Handler(Looper.getMainLooper());
     
-    // CHANGED: No arguments needed
     public static CardViewFragment newInstance() {
         return new CardViewFragment();
     }
@@ -44,7 +43,6 @@ public class CardViewFragment extends Fragment implements ViewerActivity.Searcha
     public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
         View view = inflater.inflate(R.layout.fragment_card_view, container, false);
         
-        // CHANGED: Fetch data from Activity
         if (getActivity() instanceof ViewerActivity) {
             jsonData = ((ViewerActivity) getActivity()).getJsonData();
         }
@@ -61,6 +59,23 @@ public class CardViewFragment extends Fragment implements ViewerActivity.Searcha
         }
         
         return view;
+    }
+    
+    @Override
+    public void onResume() {
+        super.onResume();
+        // Apply current search query when fragment becomes visible
+        if (getActivity() instanceof ViewerActivity) {
+            String currentQuery = ((ViewerActivity) getActivity()).getCurrentSearchQuery();
+            if (currentQuery != null && !currentQuery.isEmpty() && adapter != null) {
+                // Post with delay to ensure data is loaded
+                recyclerView.postDelayed(() -> {
+                    if (adapter != null && !items.isEmpty()) {
+                        adapter.filter(currentQuery);
+                    }
+                }, 100);
+            }
+        }
     }
     
     private void parseJsonAsync() {
@@ -85,15 +100,24 @@ public class CardViewFragment extends Fragment implements ViewerActivity.Searcha
             mainHandler.post(() -> {
                 items.clear();
                 items.addAll(tempItems);
+                adapter.updateAllItems(tempItems);
                 adapter.notifyDataSetChanged();
                 progressBar.setVisibility(View.GONE);
                 recyclerView.setVisibility(View.VISIBLE);
+                
+                // Apply search filter if there's an active search
+                if (getActivity() instanceof ViewerActivity) {
+                    String currentQuery = ((ViewerActivity) getActivity()).getCurrentSearchQuery();
+                    if (currentQuery != null && !currentQuery.isEmpty()) {
+                        adapter.filter(currentQuery);
+                    }
+                }
             });
         });
     }
     
     private void parseObject(JSONObject obj, String prefix, List<CardItem> list, int depth) {
-        if (depth > 10) return; // Limit depth to prevent stack overflow
+        if (depth > 10) return;
         
         Iterator<String> keys = obj.keys();
         while (keys.hasNext()) {
@@ -118,7 +142,7 @@ public class CardViewFragment extends Fragment implements ViewerActivity.Searcha
     private void parseArray(JSONArray arr, String prefix, List<CardItem> list, int depth) {
         if (depth > 10) return;
         
-        int maxItems = Math.min(arr.length(), 100); // Limit array items shown
+        int maxItems = Math.min(arr.length(), 100);
         for (int i = 0; i < maxItems; i++) {
             String fullKey = prefix + "[" + i + "]";
             try {
@@ -157,6 +181,11 @@ public class CardViewFragment extends Fragment implements ViewerActivity.Searcha
         }
     }
     
+    // NEW: Public method to allow ViewerActivity to access adapter for navigation
+    public CardAdapter getAdapter() {
+        return adapter;
+    }
+    
     @Override
     public void onDestroy() {
         super.onDestroy();
@@ -167,6 +196,7 @@ public class CardViewFragment extends Fragment implements ViewerActivity.Searcha
         String key;
         String value;
         String type;
+        boolean matchesSearch = false; // NEW: Track search matches
         
         CardItem(String key, String value, String type) {
             this.key = key;
@@ -179,9 +209,22 @@ public class CardViewFragment extends Fragment implements ViewerActivity.Searcha
         private List<CardItem> displayItems;
         private List<CardItem> allItems;
         
+        // NEW: Search navigation fields
+        private String currentSearchQuery = "";
+        private List<Integer> searchMatches = new ArrayList<>();
+        private int currentMatchIndex = -1;
+        
         CardAdapter(List<CardItem> items) {
             this.allItems = items;
             this.displayItems = items;
+        }
+        
+        // Method to update all items (called after async loading)
+        void updateAllItems(List<CardItem> newItems) {
+            this.allItems = newItems;
+            if (currentSearchQuery.isEmpty()) {
+                this.displayItems = newItems;
+            }
         }
         
         @NonNull
@@ -202,6 +245,20 @@ public class CardViewFragment extends Fragment implements ViewerActivity.Searcha
             
             int color = getTypeColor(item.type);
             holder.typeText.setTextColor(color);
+            
+            // NEW: Highlight current match differently
+            if (!searchMatches.isEmpty() && currentMatchIndex >= 0 && 
+                currentMatchIndex < searchMatches.size() &&
+                searchMatches.get(currentMatchIndex) == position) {
+                holder.card.setStrokeColor(0xFFFFEB3B);
+                holder.card.setStrokeWidth(6);
+            } else if (item.matchesSearch) {
+                holder.card.setStrokeColor(0xFFFFD54F);
+                holder.card.setStrokeWidth(4);
+            } else {
+                holder.card.setStrokeColor(0x00000000);
+                holder.card.setStrokeWidth(0);
+            }
             
             holder.card.setOnLongClickListener(v -> {
                 ClipboardManager clipboard = (ClipboardManager) 
@@ -231,20 +288,87 @@ public class CardViewFragment extends Fragment implements ViewerActivity.Searcha
         }
         
         void filter(String query) {
+            currentSearchQuery = query;
+            
             if (query.isEmpty()) {
+                // Clear search
+                for (CardItem item : allItems) {
+                    item.matchesSearch = false;
+                }
                 displayItems = allItems;
+                searchMatches.clear();
+                currentMatchIndex = -1;
             } else {
+                // Filter and mark matches
                 List<CardItem> filtered = new ArrayList<>();
                 String lowerQuery = query.toLowerCase();
                 for (CardItem item : allItems) {
-                    if (item.key.toLowerCase().contains(lowerQuery) ||
-                        item.value.toLowerCase().contains(lowerQuery)) {
+                    boolean matches = item.key.toLowerCase().contains(lowerQuery) ||
+                        item.value.toLowerCase().contains(lowerQuery);
+                    item.matchesSearch = matches;
+                    if (matches) {
                         filtered.add(item);
                     }
                 }
                 displayItems = filtered;
+                
+                // NEW: Update search matches and scroll to first
+                updateSearchMatches();
+                if (!searchMatches.isEmpty()) {
+                    currentMatchIndex = 0;
+                    scrollToCurrentMatch();
+                }
             }
             notifyDataSetChanged();
+        }
+        
+        // NEW: Update search matches list
+        private void updateSearchMatches() {
+            searchMatches.clear();
+            for (int i = 0; i < displayItems.size(); i++) {
+                if (displayItems.get(i).matchesSearch) {
+                    searchMatches.add(i);
+                }
+            }
+        }
+        
+        // NEW: Scroll to current match
+        private void scrollToCurrentMatch() {
+            if (currentMatchIndex >= 0 && currentMatchIndex < searchMatches.size()) {
+                int position = searchMatches.get(currentMatchIndex);
+                RecyclerView.LayoutManager layoutManager = recyclerView.getLayoutManager();
+                if (layoutManager instanceof LinearLayoutManager) {
+                    ((LinearLayoutManager) layoutManager).scrollToPositionWithOffset(position, 100);
+                }
+                notifyDataSetChanged();
+            }
+        }
+        
+        // NEW: Navigate to next match
+        public void nextMatch() {
+            if (searchMatches.isEmpty()) return;
+            currentMatchIndex = (currentMatchIndex + 1) % searchMatches.size();
+            scrollToCurrentMatch();
+        }
+        
+        // NEW: Navigate to previous match
+        public void previousMatch() {
+            if (searchMatches.isEmpty()) return;
+            currentMatchIndex--;
+            if (currentMatchIndex < 0) {
+                currentMatchIndex = searchMatches.size() - 1;
+            }
+            scrollToCurrentMatch();
+        }
+        
+        // NEW: Get current match index
+        public int getCurrentMatchIndex() {
+            return currentMatchIndex;
+        }
+        
+        // NEW: Get total matches
+        public int getTotalMatches() {
+            return searchMatches.size();
         }
         
         class ViewHolder extends RecyclerView.ViewHolder {

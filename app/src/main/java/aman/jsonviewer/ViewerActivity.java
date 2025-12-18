@@ -6,6 +6,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
 import android.text.SpannableStringBuilder;
+import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.Menu;
@@ -13,6 +14,7 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -81,11 +83,8 @@ public class ViewerActivity extends AppCompatActivity {
         View decorView = getWindow().getDecorView();
         int uiOptions =
                 View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                        
                         | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
         decorView.setSystemUiVisibility(uiOptions);
-
-        
 
         // CRITICAL FIX: Do not restore jsonData from savedInstanceState
         // Always get it from JsonDataHolder or Intent
@@ -251,13 +250,21 @@ public class ViewerActivity extends AppCompatActivity {
 
         logMemoryUsage();
 
-        if (!currentSearchQuery.isEmpty() && currentFragment instanceof SearchableFragment) {
+        // Set up counter update callback for PrettyViewFragment
+        if (currentFragment instanceof PrettyViewFragment) {
+            ((PrettyViewFragment) currentFragment).setCounterUpdateCallback(() -> updateSearchCounter());
+        }
+        
+        // CRITICAL FIX: Removed "!currentSearchQuery.isEmpty()" check.
+        // We MUST pass the query to the fragment even if it is empty (""),
+        // so that the fragment knows to CLEAR its highlights.
+        if (currentFragment instanceof SearchableFragment) {
             final Fragment f = currentFragment;
             fragmentContainer.post(
                     () -> {
                         if (f.isVisible()) {
                             ((SearchableFragment) f).onSearch(currentSearchQuery);
-                            updateSearchCounter();
+                            fragmentContainer.postDelayed(() -> updateSearchCounter(), 100);
                         }
                     });
         }
@@ -425,14 +432,20 @@ public class ViewerActivity extends AppCompatActivity {
             ((SearchableFragment) currentFragment).onSearch(query);
         }
         updateSearchNavigationVisibility();
-        updateSearchCounter();
+        
+        // Single delayed update
+        fragmentContainer.postDelayed(() -> updateSearchCounter(), 50);
     }
 
     private void updateSearchNavigationVisibility() {
         if (searchNavContainer == null) return;
 
+        // Show navigation for Tree, Card, and Pretty views
         boolean showNavigation =
-                !currentSearchQuery.isEmpty() && currentFragment instanceof TreeViewFragment;
+                !currentSearchQuery.isEmpty() && 
+                (currentFragment instanceof TreeViewFragment || 
+                 currentFragment instanceof CardViewFragment ||
+                 currentFragment instanceof PrettyViewFragment);
 
         searchNavContainer.setVisibility(showNavigation ? View.VISIBLE : View.GONE);
     }
@@ -452,26 +465,95 @@ public class ViewerActivity extends AppCompatActivity {
                     searchCounterText.setText("0/0");
                 }
             }
+        } else if (currentFragment instanceof CardViewFragment) {
+            CardViewFragment cardFragment = (CardViewFragment) currentFragment;
+            if (cardFragment.getAdapter() != null) {
+                int current = cardFragment.getAdapter().getCurrentMatchIndex() + 1;
+                int total = cardFragment.getAdapter().getTotalMatches();
+
+                if (total > 0) {
+                    searchCounterText.setText(current + "/" + total);
+                } else {
+                    searchCounterText.setText("0/0");
+                }
+            }
+        } else if (currentFragment instanceof PrettyViewFragment) {
+            PrettyViewFragment prettyFragment = (PrettyViewFragment) currentFragment;
+            if (prettyFragment.getSearcher() != null && prettyFragment.getSearcher().hasQuery()) {
+                int total = prettyFragment.getTotalMatches();
+                int current = prettyFragment.getCurrentMatchIndex();
+
+                if (total > 0 && current >= 0) {
+                    searchCounterText.setText((current + 1) + "/" + total);
+                } else if (total > 0) {
+                    searchCounterText.setText("1/" + total);
+                } else {
+                    searchCounterText.setText("0/0");
+                }
+            } else {
+                searchCounterText.setText("0/0");
+            }
+        }
+    }
+
+    // Helper method to hide the keyboard
+    private void hideKeyboard() {
+        View view = this.getCurrentFocus();
+        if (view == null) {
+            view = findViewById(android.R.id.content);
+        }
+
+        if (view != null) {
+            InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (imm != null) {
+                imm.hideSoftInputFromWindow(view.getWindowToken(), 0);
+            }
         }
     }
 
     private void navigateSearchNext() {
+        // HIDE KEYBOARD when user clicks NEXT
+        hideKeyboard();
+        
         if (currentFragment instanceof TreeViewFragment) {
             TreeViewFragment treeFragment = (TreeViewFragment) currentFragment;
             if (treeFragment.getAdapter() != null) {
                 treeFragment.getAdapter().nextMatch();
                 updateSearchCounter();
             }
+        } else if (currentFragment instanceof CardViewFragment) {
+            CardViewFragment cardFragment = (CardViewFragment) currentFragment;
+            if (cardFragment.getAdapter() != null) {
+                cardFragment.getAdapter().nextMatch();
+                updateSearchCounter();
+            }
+        } else if (currentFragment instanceof PrettyViewFragment) {
+            PrettyViewFragment prettyFragment = (PrettyViewFragment) currentFragment;
+            prettyFragment.nextMatch();
+            updateSearchCounter();
         }
     }
 
     private void navigateSearchPrevious() {
+        // HIDE KEYBOARD when user clicks PREVIOUS
+        hideKeyboard();
+
         if (currentFragment instanceof TreeViewFragment) {
             TreeViewFragment treeFragment = (TreeViewFragment) currentFragment;
             if (treeFragment.getAdapter() != null) {
                 treeFragment.getAdapter().previousMatch();
                 updateSearchCounter();
             }
+        } else if (currentFragment instanceof CardViewFragment) {
+            CardViewFragment cardFragment = (CardViewFragment) currentFragment;
+            if (cardFragment.getAdapter() != null) {
+                cardFragment.getAdapter().previousMatch();
+                updateSearchCounter();
+            }
+        } else if (currentFragment instanceof PrettyViewFragment) {
+            PrettyViewFragment prettyFragment = (PrettyViewFragment) currentFragment;
+            prettyFragment.previousMatch();
+            updateSearchCounter();
         }
     }
 

@@ -3,6 +3,9 @@ package aman.jsonviewer;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -33,6 +36,12 @@ public class PrettyViewFragment extends Fragment implements ViewerActivity.Searc
     private CodeEditor codeEditor;
     private String formattedJson;
     private static boolean isTextMateInitialized = false;
+    private EditorSearcher searcher;
+    private Handler handler = new Handler(Looper.getMainLooper());
+    private Runnable updateCounterCallback;
+
+    // A unique ID to track the latest search request
+    private long currentSearchId = 0;
 
     public static PrettyViewFragment newInstance() {
         return new PrettyViewFragment();
@@ -53,15 +62,16 @@ public class PrettyViewFragment extends Fragment implements ViewerActivity.Searc
         codeEditor.setLineNumberEnabled(true);
         codeEditor.setTextSize(14f);
         codeEditor.setWordwrap(false);
-        // Enable folding for {} and [] blocks
-codeEditor.setPinLineNumber(true); // Optional: Puts the fold indicator in the line number area
-
+        codeEditor.setPinLineNumber(true);
 
         // --- 3. Custom Colors ---
         EditorColorScheme scheme = codeEditor.getColorScheme();
         scheme.setColor(EditorColorScheme.WHOLE_BACKGROUND, Color.parseColor("#121212"));
 
-        // --- 4. Load Data ---
+        // --- 4. Initialize Searcher ---
+        searcher = codeEditor.getSearcher();
+
+        // --- 5. Load Data ---
         String jsonData = null;
         if (getActivity() instanceof ViewerActivity) {
             jsonData = ((ViewerActivity) getActivity()).getJsonData();
@@ -113,7 +123,6 @@ codeEditor.setPinLineNumber(true); // Optional: Puts the fold indicator in the l
                                 // 2. Load Theme (Darcula)
                                 String themePath = "textmate/darcula.json";
 
-                                // FIX: Implement BOTH required methods
                                 IThemeSource themeSource =
                                         new IThemeSource() {
                                             @Override
@@ -172,15 +181,132 @@ codeEditor.setPinLineNumber(true); // Optional: Puts the fold indicator in the l
 
     @Override
     public void onSearch(String query) {
-        if (codeEditor != null && query != null && !query.isEmpty()) {
-            EditorSearcher.SearchOptions options = new EditorSearcher.SearchOptions(true, false);
-            codeEditor.getSearcher().search(query, options);
+        if (codeEditor != null && searcher != null) {
+            // Increment ID to invalidate any previous pending tasks
+            currentSearchId++;
+            long mySearchId = currentSearchId;
+
+            if (query == null || query.isEmpty()) {
+                // Immediate stop
+                searcher.stopSearch();
+                notifyCounterUpdate();
+                
+                // Cleanup passes to remove "ghost" highlights
+                handler.postDelayed(() -> performSafeStop(mySearchId), 100);
+                handler.postDelayed(() -> performSafeStop(mySearchId), 300);
+                handler.postDelayed(() -> performSafeStop(mySearchId), 600);
+
+            } else {
+                // Start new search
+                EditorSearcher.SearchOptions options = new EditorSearcher.SearchOptions(false, false);
+                searcher.search(query, options);
+                
+                // 1. Update counter
+                handler.postDelayed(() -> notifyCounterUpdate(), 50);
+
+                // 2. Trigger auto-scroll to first match after 200ms
+                handler.postDelayed(() -> {
+                    // Check if this search is still valid
+                    if (mySearchId == currentSearchId && searcher != null && searcher.hasQuery()) {
+                        if (searcher.getMatchedPositionCount() > 0) {
+                            
+                            // CRITICAL FIX: Prevent gotoNext() from stealing focus from the SearchView.
+                            // We save the current state, disable focus, jump, and then restore.
+                            boolean oldFocusable = codeEditor.isFocusable();
+                            boolean oldFocusableInTouch = codeEditor.isFocusableInTouchMode();
+
+                            codeEditor.setFocusable(false);
+                            try {
+                                searcher.gotoNext();
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                            } finally {
+                                codeEditor.setFocusable(oldFocusable);
+                                codeEditor.setFocusableInTouchMode(oldFocusableInTouch);
+                            }
+                            
+                            notifyCounterUpdate();
+                        }
+                    }
+                }, 200);
+            }
         }
+    }
+    
+    // Safely stop search only if the user hasn't changed the query since this was scheduled
+    private void performSafeStop(long searchId) {
+        if (searchId == currentSearchId) {
+            if (searcher != null) {
+                searcher.stopSearch();
+            }
+            if (codeEditor != null) {
+                // Force a view update to remove any visual artifacts
+                codeEditor.postInvalidate();
+            }
+        }
+    }
+
+    // Notify ViewerActivity to update the counter
+    private void notifyCounterUpdate() {
+        if (updateCounterCallback != null) {
+            updateCounterCallback.run();
+        }
+    }
+    
+    // Set callback from ViewerActivity
+    public void setCounterUpdateCallback(Runnable callback) {
+        this.updateCounterCallback = callback;
+    }
+    
+    // Public method to allow ViewerActivity to access searcher for navigation
+    public EditorSearcher getSearcher() {
+        return searcher;
+    }
+    
+    // Method to navigate to next match
+    public void nextMatch() {
+        if (searcher != null && searcher.hasQuery()) {
+            searcher.gotoNext();
+            notifyCounterUpdate();
+        }
+    }
+    
+    // Method to navigate to previous match
+    public void previousMatch() {
+        if (searcher != null && searcher.hasQuery()) {
+            searcher.gotoPrevious();
+            notifyCounterUpdate();
+        }
+    }
+    
+    // Get current match info
+    public int getCurrentMatchIndex() {
+        if (searcher != null && searcher.hasQuery()) {
+            try {
+                return searcher.getCurrentMatchedPositionIndex();
+            } catch (Exception e) {
+                return 0;
+            }
+        }
+        return 0;
+    }
+    
+    public int getTotalMatches() {
+        if (searcher != null && searcher.hasQuery()) {
+            try {
+                return searcher.getMatchedPositionCount();
+            } catch (Exception e) {
+                return 0;
+            }
+        }
+        return 0;
     }
 
     @Override
     public void onDestroyView() {
         super.onDestroyView();
+        // Increment ID to invalidate any pending runnables
+        currentSearchId++;
         if (codeEditor != null) {
             codeEditor.release();
         }
