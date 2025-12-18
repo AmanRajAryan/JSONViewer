@@ -1,9 +1,12 @@
 package aman.jsonviewer;
 
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.fragment.app.Fragment;
@@ -11,11 +14,16 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class RawViewFragment extends Fragment implements ViewerActivity.SearchableFragment {
 
     private RecyclerView recyclerView;
+    private ProgressBar progressBar;
     private static final int CHUNK_SIZE = 3000;
+    private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     public static RawViewFragment newInstance() {
         return new RawViewFragment();
@@ -23,28 +31,42 @@ public class RawViewFragment extends Fragment implements ViewerActivity.Searchab
 
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
-        
+        View view = inflater.inflate(R.layout.fragment_raw_view, container, false);
+
+        recyclerView = view.findViewById(R.id.recyclerView);
+        progressBar = view.findViewById(R.id.progressBar);
+
+        recyclerView.setLayoutManager(new LinearLayoutManager(getContext()));
+        recyclerView.setHasFixedSize(true);
+        recyclerView.setItemViewCacheSize(10);
+
         String jsonData = null;
         if (getActivity() instanceof ViewerActivity) {
             jsonData = ((ViewerActivity) getActivity()).getJsonData();
         }
 
-        recyclerView = new RecyclerView(getContext());
-        recyclerView.setLayoutParams(new ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT));
-        recyclerView.setBackgroundColor(0xFF121212);
-        
-        recyclerView.setLayoutManager(new LinearLayoutManager(getContext()));
-        recyclerView.setHasFixedSize(true);
-        recyclerView.setItemViewCacheSize(10);
-
         if (jsonData != null) {
-            List<String> chunks = splitString(jsonData, CHUNK_SIZE);
-            recyclerView.setAdapter(new TextChunkAdapter(chunks));
+            loadDataAsync(jsonData);
         }
 
-        return recyclerView;
+        return view;
+    }
+
+    private void loadDataAsync(String jsonData) {
+        progressBar.setVisibility(View.VISIBLE);
+        recyclerView.setVisibility(View.GONE);
+
+        executor.execute(() -> {
+            List<String> chunks = splitString(jsonData, CHUNK_SIZE);
+
+            mainHandler.post(() -> {
+                if (recyclerView != null) {
+                    recyclerView.setAdapter(new TextChunkAdapter(chunks));
+                    progressBar.setVisibility(View.GONE);
+                    recyclerView.setVisibility(View.VISIBLE);
+                }
+            });
+        });
     }
 
     private List<String> splitString(String text, int interval) {
@@ -64,15 +86,13 @@ public class RawViewFragment extends Fragment implements ViewerActivity.Searchab
     @Override
     public void onDestroyView() {
         super.onDestroyView();
-        
-        if (getActivity() != null && getActivity().isFinishing()) {
-            cleanup();
-        }
+        cleanup();
     }
     
     @Override
     public void onDestroy() {
         super.onDestroy();
+        executor.shutdown();
         cleanup();
     }
     

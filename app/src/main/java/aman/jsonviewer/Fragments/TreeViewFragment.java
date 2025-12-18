@@ -7,6 +7,8 @@ import android.graphics.Path;
 import android.graphics.PixelFormat;
 import android.graphics.drawable.Drawable;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.Spannable;
 import android.text.SpannableString;
 import android.text.style.BackgroundColorSpan;
@@ -17,6 +19,7 @@ import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -28,13 +31,18 @@ import org.json.JSONObject;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class TreeViewFragment extends Fragment implements ViewerActivity.SearchableFragment {
     
     private RecyclerView recyclerView;
+    private ProgressBar progressBar;
     private TreeAdapter adapter;
     private List<TreeNode> nodes = new ArrayList<>();
     private String jsonData;
+    private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
     
     public static TreeViewFragment newInstance() {
         return new TreeViewFragment();
@@ -49,30 +57,53 @@ public class TreeViewFragment extends Fragment implements ViewerActivity.Searcha
         }
         
         recyclerView = view.findViewById(R.id.recyclerView);
+        progressBar = view.findViewById(R.id.progressBar);
+        
         recyclerView.setLayoutManager(new LinearLayoutManager(getContext()));
         
-        parseJson();
-        adapter = new TreeAdapter(nodes);
-        recyclerView.setAdapter(adapter);
+        if (jsonData != null) {
+            parseJsonAsync();
+        }
         
         return view;
     }
     
-    private void parseJson() {
-        nodes.clear();
-        if (jsonData == null) return;
-        try {
-            String trimmed = jsonData.trim();
-            boolean[] rootLines = new boolean[0];
+    private void parseJsonAsync() {
+        progressBar.setVisibility(View.VISIBLE);
+        recyclerView.setVisibility(View.GONE);
+        
+        executor.execute(() -> {
+            List<TreeNode> tempNodes = new ArrayList<>();
+            try {
+                String trimmed = jsonData.trim();
+                boolean[] rootLines = new boolean[0];
 
-            if (trimmed.startsWith("{")) {
-                JSONObject json = new JSONObject(jsonData);
-                parseObject(json, "", 0, nodes, rootLines);
-            } else if (trimmed.startsWith("[")) {
-                JSONArray json = new JSONArray(jsonData);
-                parseArray(json, "", 0, nodes, rootLines);
-            }
-        } catch (Exception e) { e.printStackTrace(); }
+                if (trimmed.startsWith("{")) {
+                    JSONObject json = new JSONObject(jsonData);
+                    parseObject(json, "", 0, tempNodes, rootLines);
+                } else if (trimmed.startsWith("[")) {
+                    JSONArray json = new JSONArray(jsonData);
+                    parseArray(json, "", 0, tempNodes, rootLines);
+                }
+            } catch (Exception e) { e.printStackTrace(); }
+            
+            mainHandler.post(() -> {
+                nodes.clear();
+                nodes.addAll(tempNodes);
+                adapter = new TreeAdapter(nodes);
+                recyclerView.setAdapter(adapter);
+                progressBar.setVisibility(View.GONE);
+                recyclerView.setVisibility(View.VISIBLE);
+                
+                // Apply search if needed
+                if (getActivity() instanceof ViewerActivity) {
+                    String query = ((ViewerActivity)getActivity()).getCurrentSearchQuery();
+                    if(query != null && !query.isEmpty()){
+                        adapter.search(query);
+                    }
+                }
+            });
+        });
     }
     
     private void parseObject(JSONObject obj, String key, int level, List<TreeNode> list, boolean[] parentLines) {
@@ -88,7 +119,6 @@ public class TreeViewFragment extends Fragment implements ViewerActivity.Searcha
         for (int i = 0; i < keysList.size(); i++) {
             String k = keysList.get(i);
             boolean isLast = (i == keysList.size() - 1);
-            
             boolean[] nextLines = new boolean[level + 1];
             System.arraycopy(parentLines, 0, nextLines, 0, parentLines.length);
             nextLines[level] = !isLast;
@@ -116,7 +146,6 @@ public class TreeViewFragment extends Fragment implements ViewerActivity.Searcha
         
         for (int i = 0; i < arr.length(); i++) {
             boolean isLast = (i == arr.length() - 1);
-            
             boolean[] nextLines = new boolean[level + 1];
             System.arraycopy(parentLines, 0, nextLines, 0, parentLines.length);
             nextLines[level] = !isLast;
@@ -150,18 +179,20 @@ public class TreeViewFragment extends Fragment implements ViewerActivity.Searcha
         if (adapter != null) adapter.search(query);
     }
     
-    // Public method to allow ViewerActivity to access adapter for navigation
     public TreeAdapter getAdapter() {
         return adapter;
+    }
+    
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        executor.shutdown();
     }
     
     enum NodeType { OBJECT, ARRAY, STRING, NUMBER, BOOLEAN, NULL }
     
     static class TreeNode {
-        String key; 
-        String value; 
-        int level; 
-        NodeType type;
+        String key; String value; int level; NodeType type;
         boolean expanded = false;
         List<TreeNode> children = new ArrayList<>();
         int childCount = 0;
@@ -170,10 +201,7 @@ public class TreeViewFragment extends Fragment implements ViewerActivity.Searcha
         boolean hasMatchingDescendant = false;
 
         TreeNode(String key, String value, int level, NodeType type) {
-            this.key = key; 
-            this.value = value; 
-            this.level = level; 
-            this.type = type;
+            this.key = key; this.value = value; this.level = level; this.type = type;
             this.verticalLines = new boolean[level];
         }
     }
@@ -207,7 +235,6 @@ public class TreeViewFragment extends Fragment implements ViewerActivity.Searcha
         public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
             TreeNode node = displayNodes.get(position);
             
-            // 1. Draw Background Rails
             ViewGroup.LayoutParams params = holder.indentationView.getLayoutParams();
             params.width = node.level * indentPx;
             holder.indentationView.setLayoutParams(params);
@@ -220,7 +247,6 @@ public class TreeViewFragment extends Fragment implements ViewerActivity.Searcha
                 holder.indentationView.setBackground(null);
             }
 
-            // 2. Connector Logic
             if (node.type == NodeType.OBJECT || node.type == NodeType.ARRAY) {
                 if (node.expanded && !node.children.isEmpty()) {
                     holder.iconWrapper.setBackground(new ParentLineDrawable(density));
@@ -236,22 +262,15 @@ public class TreeViewFragment extends Fragment implements ViewerActivity.Searcha
                 holder.icon.setColorFilter(null); 
             }
             
-            // 3. Text with search highlighting
             SpannableString spanned;
             if (!node.key.isEmpty()) {
                 String text = node.key + ": " + node.value;
                 spanned = new SpannableString(text);
-                
-                // Color the key
                 spanned.setSpan(new ForegroundColorSpan(0xFF00BCD4), 
                     0, node.key.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
-                
-                // Color the value
                 int valueColor = getColorForType(node.type);
                 spanned.setSpan(new ForegroundColorSpan(valueColor), 
                     node.key.length() + 2, text.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
-                
-                // Highlight search matches
                 if (!currentSearchQuery.isEmpty() && node.matchesSearch) {
                     highlightSearchInText(spanned, text, currentSearchQuery);
                 }
@@ -260,14 +279,12 @@ public class TreeViewFragment extends Fragment implements ViewerActivity.Searcha
                 int valueColor = getColorForType(node.type);
                 spanned.setSpan(new ForegroundColorSpan(valueColor), 
                     0, node.value.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
-                
                 if (!currentSearchQuery.isEmpty() && node.matchesSearch) {
                     highlightSearchInText(spanned, node.value, currentSearchQuery);
                 }
             }
             holder.text.setText(spanned);
             
-            // 4. Click handler
             holder.itemLayout.setOnClickListener(v -> {
                 if (node.type == NodeType.OBJECT || node.type == NodeType.ARRAY) {
                     int clickedPosition = holder.getAdapterPosition();
@@ -296,55 +313,37 @@ public class TreeViewFragment extends Fragment implements ViewerActivity.Searcha
         private void toggleNodeAtPosition(int position) {
             TreeNode node = displayNodes.get(position);
             node.expanded = !node.expanded;
-            
             if (node.expanded) {
-                // EXPAND: Insert children
                 List<TreeNode> childrenToAdd = new ArrayList<>();
                 addVisibleNodes(node.children, childrenToAdd);
-                
                 displayNodes.addAll(position + 1, childrenToAdd);
                 notifyItemChanged(position);
                 notifyItemRangeInserted(position + 1, childrenToAdd.size());
             } else {
-                // COLLAPSE: Remove all descendants
                 int removeCount = countDescendants(position);
-                
-                for (int i = 0; i < removeCount; i++) {
-                    displayNodes.remove(position + 1);
-                }
-                
+                for (int i = 0; i < removeCount; i++) displayNodes.remove(position + 1);
                 notifyItemChanged(position);
                 notifyItemRangeRemoved(position + 1, removeCount);
             }
-            
-            // Update search matches after toggle
-            if (!currentSearchQuery.isEmpty()) {
-                updateSearchMatches();
-            }
+            if (!currentSearchQuery.isEmpty()) updateSearchMatches();
         }
 
         private int countDescendants(int parentPosition) {
             TreeNode parent = displayNodes.get(parentPosition);
             int count = 0;
             int checkLevel = parent.level;
-            
             for (int i = parentPosition + 1; i < displayNodes.size(); i++) {
                 TreeNode node = displayNodes.get(i);
-                if (node.level <= checkLevel) {
-                    break;
-                }
+                if (node.level <= checkLevel) break;
                 count++;
             }
-            
             return count;
         }
 
         private void addVisibleNodes(List<TreeNode> nodes, List<TreeNode> targetList) {
             for (TreeNode node : nodes) {
                 targetList.add(node);
-                if (node.expanded && !node.children.isEmpty()) {
-                    addVisibleNodes(node.children, targetList);
-                }
+                if (node.expanded && !node.children.isEmpty()) addVisibleNodes(node.children, targetList);
             }
         }
 
@@ -375,34 +374,26 @@ public class TreeViewFragment extends Fragment implements ViewerActivity.Searcha
         }
         
         @Override
-        public int getItemCount() { 
-            return displayNodes.size(); 
-        }
+        public int getItemCount() { return displayNodes.size(); }
         
         void search(String query) {
             currentSearchQuery = query;
-            
             if (query.isEmpty()) {
-                // Clear search - collapse all and reset
                 clearSearchState(allNodes);
                 rebuildDisplayList();
                 searchMatches.clear();
                 currentMatchIndex = -1;
                 notifyDataSetChanged();
             } else {
-                // Mark matches and expand parents
                 clearSearchState(allNodes);
                 markSearchMatches(allNodes, query.toLowerCase());
                 expandNodesWithMatches(allNodes);
                 rebuildDisplayList();
                 updateSearchMatches();
-                
-                // Scroll to first match
                 if (!searchMatches.isEmpty()) {
                     currentMatchIndex = 0;
                     scrollToCurrentMatch();
                 }
-                
                 notifyDataSetChanged();
             }
         }
@@ -411,32 +402,20 @@ public class TreeViewFragment extends Fragment implements ViewerActivity.Searcha
             for (TreeNode node : nodes) {
                 node.matchesSearch = false;
                 node.hasMatchingDescendant = false;
-                if (!node.children.isEmpty()) {
-                    clearSearchState(node.children);
-                }
+                if (!node.children.isEmpty()) clearSearchState(node.children);
             }
         }
         
         private boolean markSearchMatches(List<TreeNode> nodes, String query) {
             boolean hasMatch = false;
-            
             for (TreeNode node : nodes) {
-                boolean nodeMatches = node.key.toLowerCase().contains(query) || 
-                                     node.value.toLowerCase().contains(query);
-                
+                boolean nodeMatches = node.key.toLowerCase().contains(query) || node.value.toLowerCase().contains(query);
                 boolean childrenMatch = false;
-                if (!node.children.isEmpty()) {
-                    childrenMatch = markSearchMatches(node.children, query);
-                }
-                
+                if (!node.children.isEmpty()) childrenMatch = markSearchMatches(node.children, query);
                 node.matchesSearch = nodeMatches;
                 node.hasMatchingDescendant = childrenMatch;
-                
-                if (nodeMatches || childrenMatch) {
-                    hasMatch = true;
-                }
+                if (nodeMatches || childrenMatch) hasMatch = true;
             }
-            
             return hasMatch;
         }
         
@@ -452,15 +431,9 @@ public class TreeViewFragment extends Fragment implements ViewerActivity.Searcha
         private void updateSearchMatches() {
             searchMatches.clear();
             for (int i = 0; i < displayNodes.size(); i++) {
-                if (displayNodes.get(i).matchesSearch) {
-                    searchMatches.add(i);
-                }
+                if (displayNodes.get(i).matchesSearch) searchMatches.add(i);
             }
-            
-            // Adjust current match index if needed
-            if (currentMatchIndex >= searchMatches.size()) {
-                currentMatchIndex = searchMatches.isEmpty() ? -1 : 0;
-            }
+            if (currentMatchIndex >= searchMatches.size()) currentMatchIndex = searchMatches.isEmpty() ? -1 : 0;
         }
         
         private void scrollToCurrentMatch() {
@@ -482,19 +455,12 @@ public class TreeViewFragment extends Fragment implements ViewerActivity.Searcha
         public void previousMatch() {
             if (searchMatches.isEmpty()) return;
             currentMatchIndex--;
-            if (currentMatchIndex < 0) {
-                currentMatchIndex = searchMatches.size() - 1;
-            }
+            if (currentMatchIndex < 0) currentMatchIndex = searchMatches.size() - 1;
             scrollToCurrentMatch();
         }
         
-        public int getCurrentMatchIndex() {
-            return currentMatchIndex;
-        }
-        
-        public int getTotalMatches() {
-            return searchMatches.size();
-        }
+        public int getCurrentMatchIndex() { return currentMatchIndex; }
+        public int getTotalMatches() { return searchMatches.size(); }
         
         class ViewHolder extends RecyclerView.ViewHolder {
             LinearLayout itemLayout;
@@ -512,9 +478,7 @@ public class TreeViewFragment extends Fragment implements ViewerActivity.Searcha
             }
         }
     }
-
-    // --- Drawables ---
-
+    
     private static class ParentLineDrawable extends Drawable {
         private final Paint paint;
         private final float density;
@@ -593,16 +557,12 @@ public class TreeViewFragment extends Fragment implements ViewerActivity.Searcha
         @Override
         public void draw(@NonNull Canvas canvas) {
             int height = getBounds().height();
-            
-            // 1. Draw Ancestor Rails
             for (int i = 0; i < levels - 1; i++) {
                 if (i < verticalLines.length && verticalLines[i]) {
                     float x = (i * stepPx) + (stepPx / 2f);
                     canvas.drawLine(x, 0, x, height, paint);
                 }
             }
-
-            // 2. Draw Current Node Connector
             if (levels > 0) {
                 int i = levels - 1;
                 float x = (i * stepPx) + (stepPx / 2f);
@@ -625,7 +585,6 @@ public class TreeViewFragment extends Fragment implements ViewerActivity.Searcha
                 canvas.drawPath(path, paint);
             }
         }
-
         @Override public void setAlpha(int alpha) { paint.setAlpha(alpha); }
         @Override public void setColorFilter(@Nullable ColorFilter colorFilter) { paint.setColorFilter(colorFilter); }
         @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }

@@ -3,25 +3,32 @@ package aman.jsonviewer;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.SeekBar;
 import android.widget.TextView;
 import androidx.fragment.app.Fragment;
 import com.google.android.material.bottomsheet.BottomSheetDialog;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class FlowChartViewFragment extends Fragment implements ViewerActivity.SearchableFragment {
 
     private FlowChartCanvas flowChartCanvas;
+    private ProgressBar progressBar;
     private String jsonData;
+    private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
-    // CHANGED: No arguments needed
     public static FlowChartViewFragment newInstance() {
         return new FlowChartViewFragment();
     }
@@ -30,7 +37,6 @@ public class FlowChartViewFragment extends Fragment implements ViewerActivity.Se
     public View onCreateView(
             LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
 
-        // CHANGED: Fetch data from Activity
         if (getActivity() instanceof ViewerActivity) {
             jsonData = ((ViewerActivity) getActivity()).getJsonData();
         }
@@ -40,6 +46,7 @@ public class FlowChartViewFragment extends Fragment implements ViewerActivity.Se
         rootLayout.setLayoutParams(
                 new ViewGroup.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        rootLayout.setBackgroundColor(0xFF121212);
 
         // 2. Initialize the Canvas
         flowChartCanvas = new FlowChartCanvas(getContext());
@@ -51,23 +58,23 @@ public class FlowChartViewFragment extends Fragment implements ViewerActivity.Se
                 new FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         params.gravity = Gravity.BOTTOM;
-        params.setMargins(40, 0, 40, 40); // Left, Top, Right, Bottom margins
+        params.setMargins(40, 0, 40, 40); 
         rootLayout.addView(sliderPanel, params);
+        
+        // 4. Create ProgressBar
+        progressBar = new ProgressBar(getContext());
+        FrameLayout.LayoutParams progressParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, 
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        progressParams.gravity = Gravity.CENTER;
+        progressBar.setLayoutParams(progressParams);
+        progressBar.setVisibility(View.GONE);
+        progressBar.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(0xFF00BCD4));
+        rootLayout.addView(progressBar);
 
-        // 4. Parse JSON
+        // 5. Parse JSON Async
         if (jsonData != null) {
-            try {
-                String trimmed = jsonData.trim();
-                if (trimmed.startsWith("{")) {
-                    JSONObject jsonObject = new JSONObject(jsonData);
-                    flowChartCanvas.buildFromJSON(jsonObject);
-                } else if (trimmed.startsWith("[")) {
-                    JSONArray jsonArray = new JSONArray(jsonData);
-                    flowChartCanvas.buildFromJSONArray(jsonArray);
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
+            loadGraphAsync();
         }
 
         // Set click listener
@@ -78,54 +85,87 @@ public class FlowChartViewFragment extends Fragment implements ViewerActivity.Se
 
         return rootLayout;
     }
+    
+    private void loadGraphAsync() {
+        progressBar.setVisibility(View.VISIBLE);
+        flowChartCanvas.setVisibility(View.GONE);
+        
+        executor.execute(() -> {
+            try {
+                String trimmed = jsonData.trim();
+                final Object result;
+                final boolean isObject;
+                
+                if (trimmed.startsWith("{")) {
+                    result = new JSONObject(jsonData);
+                    isObject = true;
+                } else if (trimmed.startsWith("[")) {
+                    result = new JSONArray(jsonData);
+                    isObject = false;
+                } else {
+                    result = null;
+                    isObject = false;
+                }
+                
+                mainHandler.post(() -> {
+                    if (result != null) {
+                        try {
+                            if (isObject) {
+                                flowChartCanvas.buildFromJSON((JSONObject) result);
+                            } else {
+                                flowChartCanvas.buildFromJSONArray((JSONArray) result);
+                            }
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
+                    }
+                    progressBar.setVisibility(View.GONE);
+                    flowChartCanvas.setVisibility(View.VISIBLE);
+                });
+                
+            } catch (Exception e) {
+                e.printStackTrace();
+                mainHandler.post(() -> progressBar.setVisibility(View.GONE));
+            }
+        });
+    }
 
     private View createSliderPanel() {
-        // Container with semi-transparent background
         LinearLayout panel = new LinearLayout(getContext());
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(40, 30, 40, 30);
 
-        // rounded background
         GradientDrawable bg = new GradientDrawable();
-        bg.setColor(Color.parseColor("#CC1E1E1E")); // Semi-transparent dark
+        bg.setColor(Color.parseColor("#CC1E1E1E"));
         bg.setCornerRadius(24);
         bg.setStroke(2, Color.parseColor("#33FFFFFF"));
         panel.setBackground(bg);
 
-        // Label
         TextView label = new TextView(getContext());
         label.setText("Vertical Height");
         label.setTextColor(Color.WHITE);
         label.setTextSize(12);
         panel.addView(label);
 
-        // Slider (SeekBar)
         SeekBar seekBar = new SeekBar(getContext());
-        seekBar.setMax(2000); // Max spacing
-        seekBar.setProgress((int) LayoutConstants.VERTICAL_SPACING); // Current
+        seekBar.setMax(2000); 
+        seekBar.setProgress((int) LayoutConstants.VERTICAL_SPACING); 
 
-        // Add minimal margin to seekBar
         LinearLayout.LayoutParams seekParams =
                 new LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         seekParams.topMargin = 10;
         panel.addView(seekBar, seekParams);
 
-        // Listener
         seekBar.setOnSeekBarChangeListener(
                 new SeekBar.OnSeekBarChangeListener() {
                     @Override
                     public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                        // Minimum spacing of 50 to prevent overlap
                         float newSpacing = Math.max(50, progress);
                         flowChartCanvas.updateVerticalSpacing(newSpacing);
                     }
-
-                    @Override
-                    public void onStartTrackingTouch(SeekBar seekBar) {}
-
-                    @Override
-                    public void onStopTrackingTouch(SeekBar seekBar) {}
+                    @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+                    @Override public void onStopTrackingTouch(SeekBar seekBar) {}
                 });
 
         return panel;
@@ -147,11 +187,16 @@ public class FlowChartViewFragment extends Fragment implements ViewerActivity.Se
         bottomSheet.show();
     }
 
-    // Inside FlowChartViewFragment.java
     @Override
     public void onSearch(String query) {
         if (flowChartCanvas != null) {
             flowChartCanvas.performSearch(query);
         }
+    }
+    
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        executor.shutdown();
     }
 }

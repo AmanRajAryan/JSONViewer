@@ -5,156 +5,118 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
-import android.text.SpannableStringBuilder;
 import android.util.Log;
-import android.util.TypedValue;
-import android.view.Gravity;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
-import android.view.Window;
-import android.view.WindowManager;
-import android.view.inputmethod.InputMethodManager;
-import android.widget.FrameLayout;
-import android.widget.LinearLayout;
-import android.widget.TextView;
 import android.widget.Toast;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.SearchView;
 import androidx.appcompat.widget.Toolbar;
 import androidx.fragment.app.Fragment;
-import androidx.fragment.app.FragmentTransaction;
-import com.google.android.material.tabs.TabLayout;
-import java.util.HashMap;
-import java.util.Map;
 
 public class ViewerActivity extends AppCompatActivity {
 
-    private void logMemoryUsage() {
-        Runtime runtime = Runtime.getRuntime();
-        long maxMemory = runtime.maxMemory() / (1024 * 1024);
-        long totalMemory = runtime.totalMemory() / (1024 * 1024);
-        long freeMemory = runtime.freeMemory() / (1024 * 1024);
-        long usedMemory = totalMemory - freeMemory;
-
-        Log.d("MEMORY_CHECK", "=================================");
-        Log.d("MEMORY_CHECK", "Max Memory Limit:  " + maxMemory + " MB");
-        Log.d("MEMORY_CHECK", "Current Heap Size: " + totalMemory + " MB");
-        Log.d("MEMORY_CHECK", "Actually Used:     " + usedMemory + " MB");
-        Log.d("MEMORY_CHECK", "=================================");
-    }
-
-    private FrameLayout fragmentContainer;
-    private TabLayout tabLayout;
+    private JsonLoader jsonLoader;
+    private FragmentController fragmentController;
+    private SearchNavigator searchNavigator;
     private String jsonData;
-    private String currentSearchQuery = "";
-
-    private Fragment currentFragment;
-    private Fragment[] fragments = new Fragment[5];
-
-    private static final String[] TAGS = {
-        "TAG_TREE", "TAG_RAW", "TAG_CARD", "TAG_PRETTY", "TAG_FLOW"
-    };
-
-    private Map<String, CachedData> fragmentCache = new HashMap<>();
-
-    private TextView searchPreviousBtn;
-    private TextView searchNextBtn;
-    private TextView searchCounterText;
-    private LinearLayout searchNavContainer;
-
-    public static class CachedData {
-        public String formattedJson;
-        public SpannableStringBuilder highlightedText;
-
-        public CachedData(String formattedJson, SpannableStringBuilder highlightedText) {
-            this.formattedJson = formattedJson;
-            this.highlightedText = highlightedText;
-        }
-    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_viewer);
-
-        // Hides both top and bottom bars
+        
+        // 1. UI Setup
         View decorView = getWindow().getDecorView();
-        int uiOptions =
-                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
-        decorView.setSystemUiVisibility(uiOptions);
-
-        // CRITICAL FIX: Do not restore jsonData from savedInstanceState
-        // Always get it from JsonDataHolder or Intent
-        jsonData = JsonDataHolder.getInstance().getJsonData();
-
-        if (jsonData == null) {
-            jsonData = getIntent().getStringExtra("json_data");
-            // Store it in holder for future use
-            if (jsonData != null) {
-                JsonDataHolder.getInstance().setJsonData(jsonData);
-            }
-        }
-
-        if (savedInstanceState != null) {
-            // Only restore UI state, not data
-            currentSearchQuery = savedInstanceState.getString("search_query", "");
-
-            for (int i = 0; i < TAGS.length; i++) {
-                fragments[i] = getSupportFragmentManager().findFragmentByTag(TAGS[i]);
-            }
-        }
+        decorView.setSystemUiVisibility(
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        );
 
         Toolbar toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
         getSupportActionBar().setDisplayHomeAsUpEnabled(true);
         getSupportActionBar().setTitle("JSON Viewer");
 
-        fragmentContainer = findViewById(R.id.fragmentContainer);
-        tabLayout = findViewById(R.id.tabLayout);
+        // 2. Initialize Helpers
+        jsonLoader = new JsonLoader(this);
+        fragmentController = new FragmentController(
+            getSupportFragmentManager(), 
+            R.id.fragmentContainer, 
+            findViewById(R.id.tabLayout)
+        );
+        searchNavigator = new SearchNavigator(this, fragmentController);
 
-        setupTabs();
-
-        if (savedInstanceState != null) {
-            int selectedTab = savedInstanceState.getInt("selected_tab", 0);
-            TabLayout.Tab tab = tabLayout.getTabAt(selectedTab);
-            if (tab != null) {
-                tab.select();
-                loadFragment(selectedTab);
-            }
-        } else {
-            loadFragment(0);
+        // 3. Load Data
+        jsonData = jsonLoader.loadJson(getIntent());
+        
+        if (jsonData == null) {
+            Toast.makeText(this, "No JSON data found", Toast.LENGTH_SHORT).show();
         }
 
+        // 4. Restore State & Setup Listeners
+        fragmentController.restoreState(savedInstanceState);
+        searchNavigator.restoreState(savedInstanceState);
+        
+        // Sync search visibility when tabs change
+        fragmentController.setOnFragmentChangedListener(() -> {
+            searchNavigator.updateVisibility();
+            setupFragmentCallbacks();
+        });
+        
+        setupFragmentCallbacks();
         logMemoryUsage();
+    }
+    
+    // Wire up callbacks for vttyView or other dynamic fragments
+    private void setupFragmentCallbacks() {
+        Fragment current = fragmentController.getCurrentFragment();
+        if (current instanceof PrettyViewFragment) {
+            ((PrettyViewFragment) current).setCounterUpdateCallback(
+                () -> searchNavigator.updateCounter()
+            );
+        }
+        
+        // If there is an active search, re-apply it to the new fragment
+        String query = searchNavigator.getCurrentQuery();
+        if (current instanceof SearchableFragment && !query.isEmpty()) {
+            // Post to ensure view is created
+            findViewById(R.id.fragmentContainer).post(() -> 
+                ((SearchableFragment) current).onSearch(query)
+            );
+        }
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        getMenuInflater().inflate(R.menu.viewer_menu, menu);
+        MenuItem searchItem = menu.findItem(R.id.action_search);
+        SearchView searchView = (SearchView) searchItem.getActionView();
+        
+        searchNavigator.attachToSearchView(searchView);
+        
+        // Expand if there was a previous state
+        if (!searchNavigator.getCurrentQuery().isEmpty()) {
+            searchItem.expandActionView();
+        }
+        
+        return true;
     }
 
     @Override
     protected void onSaveInstanceState(@NonNull Bundle outState) {
         super.onSaveInstanceState(outState);
-        // CRITICAL FIX: Do NOT save jsonData - it's too large and causes
-        // TransactionTooLargeException
-        // Only save UI state
-        outState.putString("search_query", currentSearchQuery);
-        outState.putInt("selected_tab", tabLayout.getSelectedTabPosition());
+        fragmentController.saveState(outState);
+        searchNavigator.saveState(outState);
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
         if (isFinishing()) {
-            // Clear all fragment caches
-            for (Fragment fragment : fragments) {
-                if (fragment != null) {
-                    trimFragmentCache(fragment);
-                }
-            }
-
-            JsonDataHolder.getInstance().clear();
-            fragmentCache.clear();
-
+            fragmentController.cleanup();
+            jsonLoader.clear();
             System.gc();
         }
     }
@@ -162,256 +124,15 @@ public class ViewerActivity extends AppCompatActivity {
     @Override
     public void onTrimMemory(int level) {
         super.onTrimMemory(level);
-
-        // System is asking us to trim memory
         if (level >= TRIM_MEMORY_RUNNING_LOW) {
-            // Trim caches of hidden fragments
-            for (Fragment fragment : fragments) {
-                if (fragment != null && fragment != currentFragment) {
-                    trimFragmentCache(fragment);
-                }
-            }
-
-            fragmentCache.clear();
+            fragmentController.trimMemory();
             System.gc();
-        }
-    }
-
-    private void setupTabs() {
-        tabLayout.addTab(tabLayout.newTab().setText("Tree").setIcon(R.drawable.ic_tree));
-        tabLayout.addTab(tabLayout.newTab().setText("Pretty").setIcon(R.drawable.ic_format));
-        tabLayout.addTab(tabLayout.newTab().setText("Flow").setIcon(R.drawable.ic_flow));
-        tabLayout.addTab(tabLayout.newTab().setText("Cards").setIcon(R.drawable.ic_cards));
-        tabLayout.addTab(tabLayout.newTab().setText("Raw").setIcon(R.drawable.ic_code));
-
-        tabLayout.addOnTabSelectedListener(
-                new TabLayout.OnTabSelectedListener() {
-                    @Override
-                    public void onTabSelected(TabLayout.Tab tab) {
-                        loadFragment(tab.getPosition());
-                        updateSearchNavigationVisibility();
-                    }
-
-                    @Override
-                    public void onTabUnselected(TabLayout.Tab tab) {}
-
-                    @Override
-                    public void onTabReselected(TabLayout.Tab tab) {}
-                });
-    }
-
-    private void loadFragment(int position) {
-        FragmentTransaction transaction = getSupportFragmentManager().beginTransaction();
-
-        if (currentFragment != null) {
-            // IMPORTANT: Trim cache of hidden fragment
-            trimFragmentCache(currentFragment);
-            transaction.hide(currentFragment);
-        }
-
-        Fragment targetFragment = fragments[position];
-        String tag = TAGS[position];
-
-        if (targetFragment == null) {
-            targetFragment = getSupportFragmentManager().findFragmentByTag(tag);
-
-            if (targetFragment == null) {
-                switch (position) {
-                    case 0:
-                        targetFragment = TreeViewFragment.newInstance();
-                        break;
-                    case 1:
-                        targetFragment = PrettyViewFragment.newInstance();
-                        break;
-                    case 2:
-                        targetFragment = FlowChartViewFragment.newInstance();
-                        break;
-                    case 3:
-                        targetFragment = CardViewFragment.newInstance();
-                        break;
-                    case 4:
-                        targetFragment = RawViewFragment.newInstance();
-                        break;
-                    default:
-                        targetFragment = TreeViewFragment.newInstance();
-                        break;
-                }
-                transaction.add(R.id.fragmentContainer, targetFragment, tag);
-            } else {
-                transaction.show(targetFragment);
-            }
-            fragments[position] = targetFragment;
-        } else {
-            transaction.show(targetFragment);
-        }
-
-        currentFragment = targetFragment;
-        transaction.commit();
-
-        logMemoryUsage();
-
-        // Set up counter update callback for PrettyViewFragment
-        if (currentFragment instanceof PrettyViewFragment) {
-            ((PrettyViewFragment) currentFragment).setCounterUpdateCallback(() -> updateSearchCounter());
-        }
-        
-        // CRITICAL FIX: Removed "!currentSearchQuery.isEmpty()" check.
-        // We MUST pass the query to the fragment even if it is empty (""),
-        // so that the fragment knows to CLEAR its highlights.
-        if (currentFragment instanceof SearchableFragment) {
-            final Fragment f = currentFragment;
-            fragmentContainer.post(
-                    () -> {
-                        if (f.isVisible()) {
-                            ((SearchableFragment) f).onSearch(currentSearchQuery);
-                            fragmentContainer.postDelayed(() -> updateSearchCounter(), 100);
-                        }
-                    });
-        }
-    }
-
-    /** IMPORTANT: Trim cache of hidden fragments */
-    private void trimFragmentCache(Fragment fragment) {
-        try {
-            if (fragment instanceof PrettyViewFragment) {
-                PrettyViewFragment prettyFrag = (PrettyViewFragment) fragment;
-                // Trim via reflection or add public method
-                // For now, handled in fragment's onPause()
-            }
-            // Other fragments handle their own trimming in onPause()
-        } catch (Exception e) {
-            Log.e("ViewerActivity", "Error trimming cache", e);
-        }
-    }
-
-    @Override
-    public boolean onCreateOptionsMenu(Menu menu) {
-        getMenuInflater().inflate(R.menu.viewer_menu, menu);
-
-        MenuItem searchItem = menu.findItem(R.id.action_search);
-        SearchView searchView = (SearchView) searchItem.getActionView();
-
-        setupSearchNavigation(searchView);
-
-        if (!currentSearchQuery.isEmpty()) {
-            searchItem.expandActionView();
-            searchView.setQuery(currentSearchQuery, false);
-            searchView.clearFocus();
-        }
-
-        searchView.setOnQueryTextListener(
-                new SearchView.OnQueryTextListener() {
-                    @Override
-                    public boolean onQueryTextSubmit(String query) {
-                        performSearch(query);
-                        searchView.clearFocus();
-                        return true;
-                    }
-
-                    @Override
-                    public boolean onQueryTextChange(String newText) {
-                        performSearch(newText);
-                        return true;
-                    }
-                });
-
-        searchItem.setOnActionExpandListener(
-                new MenuItem.OnActionExpandListener() {
-                    @Override
-                    public boolean onMenuItemActionExpand(MenuItem item) {
-                        updateSearchNavigationVisibility();
-                        return true;
-                    }
-
-                    @Override
-                    public boolean onMenuItemActionCollapse(MenuItem item) {
-                        currentSearchQuery = "";
-                        performSearch("");
-                        return true;
-                    }
-                });
-
-        updateSearchNavigationVisibility();
-
-        return true;
-    }
-
-    private void setupSearchNavigation(SearchView searchView) {
-        LinearLayout mainContainer = new LinearLayout(this);
-        mainContainer.setOrientation(LinearLayout.VERTICAL);
-        mainContainer.setLayoutParams(
-                new LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.WRAP_CONTENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT));
-        mainContainer.setGravity(Gravity.CENTER);
-        mainContainer.setVisibility(View.GONE);
-
-        searchNavContainer = new LinearLayout(this);
-        searchNavContainer.setOrientation(LinearLayout.HORIZONTAL);
-        searchNavContainer.setLayoutParams(
-                new LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.WRAP_CONTENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT));
-        searchNavContainer.setGravity(Gravity.CENTER);
-
-        searchPreviousBtn = new TextView(this);
-        searchPreviousBtn.setText("<");
-        searchPreviousBtn.setTextColor(0xFFFFFFFF);
-        searchPreviousBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
-        searchPreviousBtn.setPadding(16, 8, 30, 8);
-        searchPreviousBtn.setBackground(createRippleDrawable());
-        searchPreviousBtn.setOnClickListener(v -> navigateSearchPrevious());
-
-        searchNextBtn = new TextView(this);
-        searchNextBtn.setText(">");
-        searchNextBtn.setTextColor(0xFFFFFFFF);
-        searchNextBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
-        searchNextBtn.setPadding(30, 8, 16, 8);
-        searchNextBtn.setBackground(createRippleDrawable());
-        searchNextBtn.setOnClickListener(v -> navigateSearchNext());
-
-        searchNavContainer.addView(searchPreviousBtn);
-        searchNavContainer.addView(searchNextBtn);
-
-        searchCounterText = new TextView(this);
-        searchCounterText.setText("0/0");
-        searchCounterText.setTextColor(0xFFAAAAAA);
-        searchCounterText.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
-        searchCounterText.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams counterParams =
-                new LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.WRAP_CONTENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT);
-        counterParams.topMargin = -4;
-        searchCounterText.setLayoutParams(counterParams);
-
-        mainContainer.addView(searchNavContainer);
-        mainContainer.addView(searchCounterText);
-
-        this.searchNavContainer = mainContainer;
-
-        LinearLayout searchLayout = (LinearLayout) searchView.getChildAt(0);
-        searchLayout.addView(mainContainer);
-    }
-
-    private android.graphics.drawable.Drawable createRippleDrawable() {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
-            return new android.graphics.drawable.RippleDrawable(
-                    android.content.res.ColorStateList.valueOf(0x40FFFFFF), null, null);
-        } else {
-            android.graphics.drawable.StateListDrawable drawable =
-                    new android.graphics.drawable.StateListDrawable();
-            android.graphics.drawable.ColorDrawable pressed =
-                    new android.graphics.drawable.ColorDrawable(0x40FFFFFF);
-            drawable.addState(new int[] {android.R.attr.state_pressed}, pressed);
-            return drawable;
         }
     }
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
         int id = item.getItemId();
-
         if (id == android.R.id.home) {
             finish();
             return true;
@@ -422,150 +143,17 @@ public class ViewerActivity extends AppCompatActivity {
             shareJson();
             return true;
         }
-
         return super.onOptionsItemSelected(item);
-    }
-
-    private void performSearch(String query) {
-        currentSearchQuery = query;
-        if (currentFragment instanceof SearchableFragment) {
-            ((SearchableFragment) currentFragment).onSearch(query);
-        }
-        updateSearchNavigationVisibility();
-        
-        // Single delayed update
-        fragmentContainer.postDelayed(() -> updateSearchCounter(), 50);
-    }
-
-    private void updateSearchNavigationVisibility() {
-        if (searchNavContainer == null) return;
-
-        // Show navigation for Tree, Card, and Pretty views
-        boolean showNavigation =
-                !currentSearchQuery.isEmpty() && 
-                (currentFragment instanceof TreeViewFragment || 
-                 currentFragment instanceof CardViewFragment ||
-                 currentFragment instanceof PrettyViewFragment);
-
-        searchNavContainer.setVisibility(showNavigation ? View.VISIBLE : View.GONE);
-    }
-
-    private void updateSearchCounter() {
-        if (searchCounterText == null) return;
-
-        if (currentFragment instanceof TreeViewFragment) {
-            TreeViewFragment treeFragment = (TreeViewFragment) currentFragment;
-            if (treeFragment.getAdapter() != null) {
-                int current = treeFragment.getAdapter().getCurrentMatchIndex() + 1;
-                int total = treeFragment.getAdapter().getTotalMatches();
-
-                if (total > 0) {
-                    searchCounterText.setText(current + "/" + total);
-                } else {
-                    searchCounterText.setText("0/0");
-                }
-            }
-        } else if (currentFragment instanceof CardViewFragment) {
-            CardViewFragment cardFragment = (CardViewFragment) currentFragment;
-            if (cardFragment.getAdapter() != null) {
-                int current = cardFragment.getAdapter().getCurrentMatchIndex() + 1;
-                int total = cardFragment.getAdapter().getTotalMatches();
-
-                if (total > 0) {
-                    searchCounterText.setText(current + "/" + total);
-                } else {
-                    searchCounterText.setText("0/0");
-                }
-            }
-        } else if (currentFragment instanceof PrettyViewFragment) {
-            PrettyViewFragment prettyFragment = (PrettyViewFragment) currentFragment;
-            if (prettyFragment.getSearcher() != null && prettyFragment.getSearcher().hasQuery()) {
-                int total = prettyFragment.getTotalMatches();
-                int current = prettyFragment.getCurrentMatchIndex();
-
-                if (total > 0 && current >= 0) {
-                    searchCounterText.setText((current + 1) + "/" + total);
-                } else if (total > 0) {
-                    searchCounterText.setText("1/" + total);
-                } else {
-                    searchCounterText.setText("0/0");
-                }
-            } else {
-                searchCounterText.setText("0/0");
-            }
-        }
-    }
-
-    // Helper method to hide the keyboard
-    private void hideKeyboard() {
-        View view = this.getCurrentFocus();
-        if (view == null) {
-            view = findViewById(android.R.id.content);
-        }
-
-        if (view != null) {
-            InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
-            if (imm != null) {
-                imm.hideSoftInputFromWindow(view.getWindowToken(), 0);
-            }
-        }
-    }
-
-    private void navigateSearchNext() {
-        // HIDE KEYBOARD when user clicks NEXT
-        hideKeyboard();
-        
-        if (currentFragment instanceof TreeViewFragment) {
-            TreeViewFragment treeFragment = (TreeViewFragment) currentFragment;
-            if (treeFragment.getAdapter() != null) {
-                treeFragment.getAdapter().nextMatch();
-                updateSearchCounter();
-            }
-        } else if (currentFragment instanceof CardViewFragment) {
-            CardViewFragment cardFragment = (CardViewFragment) currentFragment;
-            if (cardFragment.getAdapter() != null) {
-                cardFragment.getAdapter().nextMatch();
-                updateSearchCounter();
-            }
-        } else if (currentFragment instanceof PrettyViewFragment) {
-            PrettyViewFragment prettyFragment = (PrettyViewFragment) currentFragment;
-            prettyFragment.nextMatch();
-            updateSearchCounter();
-        }
-    }
-
-    private void navigateSearchPrevious() {
-        // HIDE KEYBOARD when user clicks PREVIOUS
-        hideKeyboard();
-
-        if (currentFragment instanceof TreeViewFragment) {
-            TreeViewFragment treeFragment = (TreeViewFragment) currentFragment;
-            if (treeFragment.getAdapter() != null) {
-                treeFragment.getAdapter().previousMatch();
-                updateSearchCounter();
-            }
-        } else if (currentFragment instanceof CardViewFragment) {
-            CardViewFragment cardFragment = (CardViewFragment) currentFragment;
-            if (cardFragment.getAdapter() != null) {
-                cardFragment.getAdapter().previousMatch();
-                updateSearchCounter();
-            }
-        } else if (currentFragment instanceof PrettyViewFragment) {
-            PrettyViewFragment prettyFragment = (PrettyViewFragment) currentFragment;
-            prettyFragment.previousMatch();
-            updateSearchCounter();
-        }
     }
 
     private void copyToClipboard() {
         try {
-            ClipboardManager clipboard =
-                    (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
             ClipData clip = ClipData.newPlainText("JSON", jsonData);
             clipboard.setPrimaryClip(clip);
             Toast.makeText(this, "Copied to clipboard", Toast.LENGTH_SHORT).show();
         } catch (Exception err) {
-            Toast.makeText(getApplicationContext(), err.toString(), 1).show();
+            Toast.makeText(this, err.toString(), Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -575,25 +163,33 @@ public class ViewerActivity extends AppCompatActivity {
         shareIntent.putExtra(Intent.EXTRA_TEXT, jsonData);
         startActivity(Intent.createChooser(shareIntent, "Share JSON"));
     }
+    
+    // --- Getters for Fragments to access if needed ---
 
     public String getJsonData() {
         return jsonData;
     }
-
+    
     public String getCurrentSearchQuery() {
-        return currentSearchQuery;
+        return searchNavigator.getCurrentQuery();
     }
-
+    
     public CachedData getCachedData(String key) {
-        return fragmentCache.get(key);
+        return fragmentController.getCachedData(key);
     }
-
-    public void setCachedData(
-            String key, String formattedJson, SpannableStringBuilder highlightedText) {
-        fragmentCache.put(key, new CachedData(formattedJson, highlightedText));
+    
+    public void setCachedData(String key, String formattedJson, android.text.SpannableStringBuilder highlightedText) {
+        fragmentController.setCachedData(key, new CachedData(formattedJson, highlightedText));
     }
 
     public interface SearchableFragment {
         void onSearch(String query);
+    }
+    
+    private void logMemoryUsage() {
+        Runtime runtime = Runtime.getRuntime();
+        long maxMemory = runtime.maxMemory() / (1024 * 1024);
+        long totalMemory = runtime.totalMemory() / (1024 * 1024);
+        Log.d("MEMORY_CHECK", "Max: " + maxMemory + "MB, Current: " + totalMemory + "MB");
     }
 }

@@ -4,7 +4,6 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.View;
-import android.view.animation.AnimationUtils;
 import android.widget.EditText;
 import android.widget.Toast;
 import androidx.activity.result.ActivityResultLauncher;
@@ -23,7 +22,7 @@ import org.json.JSONObject;
 public class MainActivity extends AppCompatActivity {
     
     private ActivityResultLauncher<String> filePickerLauncher;
-    private boolean isHandlingIntent = false;
+    private MaterialCardView loadingCard;
     
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -41,45 +40,18 @@ public class MainActivity extends AppCompatActivity {
         );
         
         setupViews();
-        
-        // Handle incoming intent (when app is opened via file manager)
-        handleIncomingIntent(getIntent());
-    }
-    
-    @Override
-    protected void onNewIntent(Intent intent) {
-        super.onNewIntent(intent);
-        setIntent(intent);
-        handleIncomingIntent(intent);
-    }
-    
-    private void handleIncomingIntent(Intent intent) {
-        if (intent == null || isHandlingIntent) return;
-        
-        String action = intent.getAction();
-        
-        // Check if the app was opened to view a file
-        if (Intent.ACTION_VIEW.equals(action)) {
-            Uri uri = intent.getData();
-            if (uri != null) {
-                isHandlingIntent = true;
-                // Load JSON from the file and open viewer directly
-                loadJsonFromFile(uri);
-            }
-        }
     }
     
     private void setupViews() {
         MaterialCardView pasteCard = findViewById(R.id.pasteCard);
         MaterialCardView fileCard = findViewById(R.id.fileCard);
         MaterialCardView urlCard = findViewById(R.id.urlCard);
+        loadingCard = findViewById(R.id.loadingCard);
         
-        // Animate cards on start only if not handling intent
-        if (!isHandlingIntent) {
-            animateCard(pasteCard, 0);
-            animateCard(fileCard, 100);
-            animateCard(urlCard, 200);
-        }
+        // Initial animations
+        animateCard(pasteCard, 0);
+        animateCard(fileCard, 100);
+        animateCard(urlCard, 200);
         
         pasteCard.setOnClickListener(v -> showPasteDialog());
         fileCard.setOnClickListener(v -> openFilePicker());
@@ -106,8 +78,9 @@ public class MainActivity extends AppCompatActivity {
         
         btnParse.setOnClickListener(v -> {
             String jsonText = jsonInput.getText().toString().trim();
-            if (validateAndOpenViewer(jsonText)) {
+            if (!jsonText.isEmpty()) {
                 dialog.dismiss();
+                validateAndOpenViewer(jsonText);
             }
         });
         
@@ -138,34 +111,46 @@ public class MainActivity extends AppCompatActivity {
     }
     
     private void loadJsonFromFile(Uri uri) {
-        try {
-            InputStream inputStream = getContentResolver().openInputStream(uri);
-            if (inputStream == null) {
-                Toast.makeText(this, "Cannot open file", Toast.LENGTH_SHORT).show();
-                return;
+        // Show loading immediately while reading file
+        setLoading(true);
+        
+        new Thread(() -> {
+            try {
+                InputStream inputStream = getContentResolver().openInputStream(uri);
+                if (inputStream == null) {
+                    runOnUiThread(() -> {
+                        Toast.makeText(this, "Cannot open file", Toast.LENGTH_SHORT).show();
+                        setLoading(false);
+                    });
+                    return;
+                }
+                
+                BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
+                StringBuilder builder = new StringBuilder();
+                String line;
+                
+                while ((line = reader.readLine()) != null) {
+                    builder.append(line).append("\n");
+                }
+                reader.close();
+                
+                String jsonText = builder.toString();
+                // Pass directly to validation logic (which is already on background thread here)
+                validateJsonInBackground(jsonText);
+                
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    Toast.makeText(this, "Error reading file: " + e.getMessage(), 
+                        Toast.LENGTH_LONG).show();
+                    setLoading(false);
+                });
+                e.printStackTrace();
             }
-            
-            BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
-            StringBuilder builder = new StringBuilder();
-            String line;
-            
-            while ((line = reader.readLine()) != null) {
-                builder.append(line).append("\n");
-            }
-            reader.close();
-            
-            String jsonText = builder.toString();
-            validateAndOpenViewer(jsonText);
-            
-        } catch (Exception e) {
-            Toast.makeText(this, "Error reading file: " + e.getMessage(), 
-                Toast.LENGTH_LONG).show();
-            e.printStackTrace();
-        }
+        }).start();
     }
     
     private void loadJsonFromUrl(String url) {
-        Toast.makeText(this, "Loading from URL...", Toast.LENGTH_SHORT).show();
+        setLoading(true);
         
         new Thread(() -> {
             try {
@@ -185,24 +170,35 @@ public class MainActivity extends AppCompatActivity {
                 reader.close();
                 
                 String jsonText = builder.toString();
-                runOnUiThread(() -> validateAndOpenViewer(jsonText));
+                validateJsonInBackground(jsonText);
                 
             } catch (Exception e) {
-                runOnUiThread(() -> 
+                runOnUiThread(() -> {
                     Toast.makeText(this, "Error loading URL: " + e.getMessage(), 
-                        Toast.LENGTH_LONG).show());
+                        Toast.LENGTH_LONG).show();
+                    setLoading(false);
+                });
             }
         }).start();
     }
     
-    private boolean validateAndOpenViewer(String jsonText) {
+    // Wrapper to start validation from UI events (Paste)
+    private void validateAndOpenViewer(String jsonText) {
+        setLoading(true);
+        new Thread(() -> validateJsonInBackground(jsonText)).start();
+    }
+    
+    // Actual validation logic running on background thread
+    private void validateJsonInBackground(String jsonText) {
         if (jsonText == null || jsonText.trim().isEmpty()) {
-            Toast.makeText(this, "No JSON data found", Toast.LENGTH_SHORT).show();
-            return false;
+            runOnUiThread(() -> {
+                Toast.makeText(this, "No JSON data found", Toast.LENGTH_SHORT).show();
+                setLoading(false);
+            });
+            return;
         }
         
         try {
-            // Validate JSON
             String trimmed = jsonText.trim();
             if (trimmed.startsWith("{")) {
                 new JSONObject(jsonText);
@@ -212,24 +208,30 @@ public class MainActivity extends AppCompatActivity {
                 throw new Exception("Invalid JSON format");
             }
             
-            // Store in singleton instead of Intent extra to avoid TransactionTooLargeException
-            JsonDataHolder.getInstance().setJsonData(jsonText);
-            
-            // Open viewer activity
-            Intent intent = new Intent(this, ViewerActivity.class);
-            startActivity(intent);
-            overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
-            
-            // Reset flag after opening viewer
-            isHandlingIntent = false;
-            
-            return true;
+            // Success: Switch to Main Thread to update UI and Launch Activity
+            runOnUiThread(() -> {
+                JsonDataHolder.getInstance().setJsonData(jsonText);
+                
+                Intent intent = new Intent(MainActivity.this, ViewerActivity.class);
+                startActivity(intent);
+                overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
+                
+                // Hide loading ONLY after transition starts
+                setLoading(false); 
+            });
             
         } catch (Exception e) {
-            Toast.makeText(this, "Invalid JSON: " + e.getMessage(), 
-                Toast.LENGTH_LONG).show();
-            isHandlingIntent = false;
-            return false;
+            runOnUiThread(() -> {
+                Toast.makeText(this, "Invalid JSON: " + e.getMessage(), 
+                    Toast.LENGTH_LONG).show();
+                setLoading(false);
+            });
+        }
+    }
+    
+    private void setLoading(boolean isLoading) {
+        if (loadingCard != null) {
+            loadingCard.setVisibility(isLoading ? View.VISIBLE : View.GONE);
         }
     }
 }

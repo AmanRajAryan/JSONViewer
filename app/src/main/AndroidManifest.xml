@@ -9,7 +9,6 @@
         <provider android:authorities="aman.loghub.provider" />
     </queries>
 
-
     <application
         android:name="Log"
         android:largeHeap="true"
@@ -28,8 +27,14 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            
-            <!-- Intent filter to handle JSON files -->
+        </activity>
+
+        <activity
+            android:name=".ViewerActivity"
+            android:exported="true"
+            android:screenOrientation="portrait"
+            android:parentActivityName=".MainActivity">
+
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -39,8 +44,7 @@
                 <data android:mimeType="application/json" />
                 <data android:mimeType="text/json" />
             </intent-filter>
-            
-            <!-- Additional intent filter for .json file extensions -->
+
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -53,13 +57,8 @@
                 <data android:pathPattern=".*\\..*\\..*\\.json" />
                 <data android:pathPattern=".*\\..*\\..*\\..*\\.json" />
             </intent-filter>
-        </activity>
 
-        <activity
-            android:name=".ViewerActivity"
-            android:exported="false"
-            android:screenOrientation="portrait"
-            android:parentActivityName=".MainActivity" />
+        </activity>
 
     </application>
 
