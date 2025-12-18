@@ -37,7 +37,7 @@ public class PrettyViewFragment extends Fragment implements ViewerActivity.Searc
     private final Handler handler = new Handler(Looper.getMainLooper());
     private Runnable updateCounterCallback;
     private long currentSearchId = 0;
-    
+
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
 
     public static PrettyViewFragment newInstance() {
@@ -50,6 +50,9 @@ public class PrettyViewFragment extends Fragment implements ViewerActivity.Searc
         View root = inflater.inflate(R.layout.fragment_pretty_view, container, false);
         codeEditor = root.findViewById(R.id.codeEditor);
         progressBar = root.findViewById(R.id.progressBar);
+        EditorColorScheme scheme = codeEditor.getColorScheme();
+        scheme.setColor(EditorColorScheme.WHOLE_BACKGROUND, Color.parseColor("#121212"));
+
 
         initializeTextMateFileProvider();
 
@@ -61,9 +64,7 @@ public class PrettyViewFragment extends Fragment implements ViewerActivity.Searc
         codeEditor.setPinLineNumber(true);
         codeEditor.setBlockLineEnabled(true);
 
-        EditorColorScheme scheme = codeEditor.getColorScheme();
-        scheme.setColor(EditorColorScheme.WHOLE_BACKGROUND, Color.parseColor("#121212"));
-
+        
         searcher = codeEditor.getSearcher();
 
         String jsonData = null;
@@ -89,74 +90,101 @@ public class PrettyViewFragment extends Fragment implements ViewerActivity.Searc
     private void formatAndLoadAsync(String jsonData) {
         progressBar.setVisibility(View.VISIBLE);
         codeEditor.setVisibility(View.GONE);
-        
-        executor.execute(() -> {
-            try {
-                String trimmed = jsonData.trim();
-                String result;
-                if (trimmed.startsWith("{")) {
-                    JSONObject json = new JSONObject(jsonData);
-                    result = json.toString(4);
-                } else if (trimmed.startsWith("[")) {
-                    JSONArray json = new JSONArray(jsonData);
-                    result = json.toString(4);
-                } else {
-                    result = jsonData;
-                }
-                formattedJson = result;
-                
-                handler.post(() -> {
-                    if (codeEditor != null) {
-                        codeEditor.setText(formattedJson);
-                        loadJsonLanguage();
-                        progressBar.setVisibility(View.GONE);
-                        codeEditor.setVisibility(View.VISIBLE);
+
+        executor.execute(
+                () -> {
+                    try {
+                        String trimmed = jsonData.trim();
+                        String result;
+                        if (trimmed.startsWith("{")) {
+                            JSONObject json = new JSONObject(jsonData);
+                            result = json.toString(4);
+                        } else if (trimmed.startsWith("[")) {
+                            JSONArray json = new JSONArray(jsonData);
+                            result = json.toString(4);
+                        } else {
+                            result = jsonData;
+                        }
+                        formattedJson = result;
+
+                        handler.post(
+                                () -> {
+                                    if (codeEditor != null) {
+                                        loadJsonLanguage();
+                                        codeEditor.setText(formattedJson);
+                                        
+                                        progressBar.setVisibility(View.GONE);
+                                        codeEditor.setVisibility(View.VISIBLE);
+                                    }
+                                });
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                        handler.post(
+                                () -> {
+                                    if (codeEditor != null) {
+                                        codeEditor.setText(jsonData); // Fallback to raw
+                                        progressBar.setVisibility(View.GONE);
+                                        codeEditor.setVisibility(View.VISIBLE);
+                                    }
+                                });
                     }
                 });
-            } catch (Exception e) {
-                e.printStackTrace();
-                handler.post(() -> {
-                    if (codeEditor != null) {
-                        codeEditor.setText(jsonData); // Fallback to raw
-                        progressBar.setVisibility(View.GONE);
-                        codeEditor.setVisibility(View.VISIBLE);
-                    }
-                });
-            }
-        });
     }
 
     private void loadJsonLanguage() {
-        new Thread(() -> {
-            try {
-                GrammarRegistry.getInstance().loadGrammars("textmate/languages.json");
-                String themePath = "textmate/darcula.json";
+        new Thread(
+                        () -> {
+                            try {
+                                GrammarRegistry.getInstance()
+                                        .loadGrammars("textmate/languages.json");
+                                String themePath = "textmate/darcula.json";
 
-                IThemeSource themeSource = new IThemeSource() {
-                    @Override public String getFilePath() { return themePath; }
-                    @Override public java.io.InputStreamReader getReader() throws java.io.IOException {
-                        java.io.InputStream stream = FileProviderRegistry.getInstance().tryGetInputStream(themePath);
-                        return new java.io.InputStreamReader(stream, java.nio.charset.StandardCharsets.UTF_8);
-                    }
-                };
+                                IThemeSource themeSource =
+                                        new IThemeSource() {
+                                            @Override
+                                            public String getFilePath() {
+                                                return themePath;
+                                            }
 
-                ThemeModel themeModel = new ThemeModel(themeSource, "darcula");
-                ThemeRegistry.getInstance().loadTheme(themeModel);
-                TextMateLanguage language = TextMateLanguage.create("source.json", true);
+                                            @Override
+                                            public java.io.InputStreamReader getReader()
+                                                    throws java.io.IOException {
+                                                java.io.InputStream stream =
+                                                        FileProviderRegistry.getInstance()
+                                                                .tryGetInputStream(themePath);
+                                                return new java.io.InputStreamReader(
+                                                        stream,
+                                                        java.nio.charset.StandardCharsets.UTF_8);
+                                            }
+                                        };
 
-                if (getActivity() != null) {
-                    getActivity().runOnUiThread(() -> {
-                        try {
-                            ThemeRegistry.getInstance().setTheme("darcula");
-                            codeEditor.setColorScheme(TextMateColorScheme.create(ThemeRegistry.getInstance()));
-                        } catch (Exception e) { e.printStackTrace(); }
-                        codeEditor.setEditorLanguage(language);
-                    });
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }).start();
+                                ThemeModel themeModel = new ThemeModel(themeSource, "darcula");
+                                ThemeRegistry.getInstance().loadTheme(themeModel);
+                                TextMateLanguage language =
+                                        TextMateLanguage.create("source.json", true);
+
+                                if (getActivity() != null) {
+                                    getActivity()
+                                            .runOnUiThread(
+                                                    () -> {
+                                                        try {
+                                                            ThemeRegistry.getInstance()
+                                                                    .setTheme("darcula");
+                                                            codeEditor.setColorScheme(
+                                                                    TextMateColorScheme.create(
+                                                                            ThemeRegistry
+                                                                                    .getInstance()));
+                                                        } catch (Exception e) {
+                                                            e.printStackTrace();
+                                                        }
+                                                        codeEditor.setEditorLanguage(language);
+                                                    });
+                                }
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                            }
+                        })
+                .start();
     }
 
     @Override
@@ -167,7 +195,7 @@ public class PrettyViewFragment extends Fragment implements ViewerActivity.Searc
             codeEditor.release();
         }
     }
-    
+
     @Override
     public void onDestroy() {
         super.onDestroy();
@@ -185,28 +213,37 @@ public class PrettyViewFragment extends Fragment implements ViewerActivity.Searc
                 notifyCounterUpdate();
                 handler.postDelayed(() -> performSafeStop(mySearchId), 100);
             } else {
-                EditorSearcher.SearchOptions options = new EditorSearcher.SearchOptions(false, false);
+                EditorSearcher.SearchOptions options =
+                        new EditorSearcher.SearchOptions(false, false);
                 searcher.search(query, options);
                 handler.postDelayed(() -> notifyCounterUpdate(), 50);
-                handler.postDelayed(() -> {
-                    if (mySearchId == currentSearchId && searcher != null && searcher.hasQuery()) {
-                        if (searcher.getMatchedPositionCount() > 0) {
-                            boolean oldFocusable = codeEditor.isFocusable();
-                            boolean oldFocusableInTouch = codeEditor.isFocusableInTouchMode();
-                            codeEditor.setFocusable(false);
-                            try { searcher.gotoNext(); } catch (Exception e) { e.printStackTrace(); } 
-                            finally {
-                                codeEditor.setFocusable(oldFocusable);
-                                codeEditor.setFocusableInTouchMode(oldFocusableInTouch);
+                handler.postDelayed(
+                        () -> {
+                            if (mySearchId == currentSearchId
+                                    && searcher != null
+                                    && searcher.hasQuery()) {
+                                if (searcher.getMatchedPositionCount() > 0) {
+                                    boolean oldFocusable = codeEditor.isFocusable();
+                                    boolean oldFocusableInTouch =
+                                            codeEditor.isFocusableInTouchMode();
+                                    codeEditor.setFocusable(false);
+                                    try {
+                                        searcher.gotoNext();
+                                    } catch (Exception e) {
+                                        e.printStackTrace();
+                                    } finally {
+                                        codeEditor.setFocusable(oldFocusable);
+                                        codeEditor.setFocusableInTouchMode(oldFocusableInTouch);
+                                    }
+                                    notifyCounterUpdate();
+                                }
                             }
-                            notifyCounterUpdate();
-                        }
-                    }
-                }, 200);
+                        },
+                        200);
             }
         }
     }
-    
+
     private void performSafeStop(long searchId) {
         if (searchId == currentSearchId) {
             if (searcher != null) searcher.stopSearch();
@@ -217,37 +254,47 @@ public class PrettyViewFragment extends Fragment implements ViewerActivity.Searc
     private void notifyCounterUpdate() {
         if (updateCounterCallback != null) updateCounterCallback.run();
     }
-    
+
     public void setCounterUpdateCallback(Runnable callback) {
         this.updateCounterCallback = callback;
     }
-    
-    public EditorSearcher getSearcher() { return searcher; }
-    
+
+    public EditorSearcher getSearcher() {
+        return searcher;
+    }
+
     public void nextMatch() {
         if (searcher != null && searcher.hasQuery()) {
             searcher.gotoNext();
             notifyCounterUpdate();
         }
     }
-    
+
     public void previousMatch() {
         if (searcher != null && searcher.hasQuery()) {
             searcher.gotoPrevious();
             notifyCounterUpdate();
         }
     }
-    
+
     public int getCurrentMatchIndex() {
         if (searcher != null && searcher.hasQuery()) {
-            try { return searcher.getCurrentMatchedPositionIndex(); } catch (Exception e) { return 0; }
+            try {
+                return searcher.getCurrentMatchedPositionIndex();
+            } catch (Exception e) {
+                return 0;
+            }
         }
         return 0;
     }
-    
+
     public int getTotalMatches() {
         if (searcher != null && searcher.hasQuery()) {
-            try { return searcher.getMatchedPositionCount(); } catch (Exception e) { return 0; }
+            try {
+                return searcher.getMatchedPositionCount();
+            } catch (Exception e) {
+                return 0;
+            }
         }
         return 0;
     }
